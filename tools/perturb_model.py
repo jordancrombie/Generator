@@ -29,13 +29,35 @@ def gauss(seed, n):
     return (s - 4 * 32767.5) / (65536.0 * 0.57735027)
 
 
+def phase_inc(test):
+    """Integer phase step per line of a periodic test (H2, F3, L3): round(2^32 f / fH)."""
+    if "phase_inc" in test:
+        return test["phase_inc"]
+    tid, p = test["id"], test["params"]
+    hz = p["hz"] if tid == "H2" else 1.0 / p["period_s"] if tid == "F3" else 60.0 if tid == "L3" else 0.0
+    return lround(4294967296.0 * hz / FH_HZ)
+
+
+def cycle(test, n):
+    """Fraction of a cycle of line n: low 32 bits of n * phase_inc, over 2^32."""
+    return ((n * phase_inc(test)) & M32) / 4294967296.0
+
+
+LINE_NS = 1e9 / FH_HZ
+
+
 def shift_ns(test, n):
     """Target sync shift of absolute line n, ns. `test` is the manifest's test dict."""
     tid, p = test["id"], test["params"]
     if tid == "H1":
         return p["rms_ns"] * gauss(test["seed"], n)
     if tid == "H2":
-        return p["peak_ns"] * math.sin(2 * math.pi * math.fmod(n * p["hz"] / FH_HZ, 1.0))
+        return p["peak_ns"] * math.sin(2 * math.pi * cycle(test, n))
+    if tid == "F2":  # H runs p ppm fast against a fixed subcarrier
+        return -n * LINE_NS * p["ppm"] * 1e-6
+    if tid == "F3":  # rate offset peak_ppm sin(2 pi t / period), integrated; 1 - cos x = 2 sin^2(x/2)
+        amp = p["peak_ppm"] * 1e-6 * p["period_s"] / (2 * math.pi) * 1e9
+        return -amp * 2 * math.sin(math.pi * cycle(test, n)) ** 2
     if tid == "H3":
         return p["step_us"] * 1000.0 if (n // 7867) & 1 else 0.0
     if tid == "H4":
@@ -48,8 +70,11 @@ def shift_ns(test, n):
 
 
 HALF_SAMPLES = 456  # a lone half-line, rounded to the DAC's sample pairs
-SLOT_HALF, SLOT_ALT, SLOT_NOISE = 1, 2, 4
+SLOT_HALF, SLOT_ALT, SLOT_NOISE, SLOT_DROPOUT = 1, 2, 4, 8
 NOISE_VARIANTS = 4
+DROPOUT_VARIANTS = 4
+DROPOUT_POS = (0.15, 0.35, 0.55, 0.75)        # dropout start, fraction of the active width
+ACTIVE_START_US, ACTIVE_WIDTH_US = 9.4, 52.6  # picture window after the sync point
 FRAME_HZ = FH_HZ / LINES_PER_FRAME
 
 # Render modifiers for SLOT_ALT lines (src/line_render.h)
@@ -107,6 +132,88 @@ def noise_variant(frame, slot):
     return (frame * 7 + slot) % NOISE_VARIANTS
 
 
+def mix32(x):
+    return hash32(x)
+
+
+def snow_ire(seed, k):
+    """Snow sample k of rendering `seed`: uniform -15..100 IRE (src/line_render.cpp snow_ire)."""
+    x = hash32((seed * 0x9E3779B9 + k * 0x85EBCA6B) & M32)
+    return -15.0 + 115.0 * (x & 0xFFFF) / 65535.0
+
+
+def noise_sample(seed, k):
+    """Approx. N(0,1) noise sample k (src/line_render.cpp noise_sample)."""
+    s = sum(hash32((seed * 0x9E3779B9 + 4 * k + i) & M32) & 0xFFFF for i in range(4))
+    return (s - 4 * 32767.5) / (65536.0 * 0.57735027)
+
+
+# ---- Rendering style and per-line variants (C, L and S1/S2 tests) ----------
+def base_style(test):
+    """Static rendering changes for the whole test (src/perturb.cpp base_style)."""
+    tid, p = test["id"], test["params"]
+    st = {"sync_ire": -40.0, "sync_edge_samples": 3.4, "burst_amp_ire": 20.0, "chroma_rot_deg": 0.0,
+          "video_gain": 1.0, "noise_rms_ire": 0.0}
+    if tid == "S1": st["sync_ire"] = -p["sync_ire"]
+    if tid == "S2": st["sync_edge_samples"] = p["rise_ns"] / 0.59 / SAMPLE_NS
+    if tid == "C1": st["burst_amp_ire"] = p["burst_pp_ire"] / 2
+    if tid == "C2": st["burst_amp_ire"] = 0.0
+    if tid == "C4": st["chroma_rot_deg"] = p["deg"]
+    if tid == "L2": st["noise_rms_ire"] = 100.0 / 10 ** (p["snr_db"] / 20)
+    if tid == "L4": st["video_gain"] = p["white_pct"] / 100.0
+    return st
+
+
+def variant_mode(test):
+    return {"C3": "carrier", "L2": "noise", "L3": "dc"}.get(test["id"], "timing")
+
+
+def line_variant(test, n, nsub):
+    """Which pre-rendered copy line n uses in the carrier/noise/dc modes."""
+    if nsub <= 1:
+        return 0
+    mode, p = variant_mode(test), test["params"]
+    clamp = lambda v: max(0, min(nsub - 1, v))
+    if mode == "carrier":
+        step = 2 * 3.47 * p["rms_deg"] / (nsub - 1)
+        return clamp(lround(p["rms_deg"] * gauss(test["seed"], n) / step + (nsub - 1) / 2))
+    if mode == "noise":
+        return hash32((test["seed"] * 0x9E3779B9 + n) & M32) % nsub
+    if mode == "dc":
+        h = 0.5 * math.sin(2 * math.pi * cycle(test, n))
+        return clamp(lround((h + 0.5) * (nsub - 1)))
+    return 0
+
+
+def variant_value(test, v, nsub):
+    """What copy v carries: carrier phase (deg), DC level (IRE) or noise seed."""
+    mode, p = variant_mode(test), test["params"]
+    mid = (nsub - 1) / 2
+    if mode == "carrier":
+        return (v - mid) * 2 * 3.47 * p["rms_deg"] / (nsub - 1) if nsub > 1 else 0.0
+    if mode == "dc":
+        return -0.5 * p["pp_ire"] + v * p["pp_ire"] / (nsub - 1) if nsub > 1 else 0.0
+    if mode == "noise":
+        return v + 1
+    return 0.0
+
+
+def dropout_lines(test, frame):
+    """L1: {line: variant} of the lines carrying a dropout in this frame."""
+    out = {}
+    for j in range(int(test["params"]["per_field"])):
+        L = 30 + hash32((test["seed"] * 2654435761 + frame * 64 + j) & M32) % 141
+        out[L] = out[L + 262] = j % DROPOUT_VARIANTS
+    return out
+
+
+def dropout_span_us(test, var):
+    """L1: (start, end) of dropout variant `var`, us after the sync point (always inside the picture)."""
+    length = test["params"]["length_us"]
+    t0 = ACTIVE_START_US + DROPOUT_POS[var] * max(0.0, ACTIVE_WIDTH_US - length)
+    return t0, t0 + length
+
+
 def noise_ire(variant, k):
     """IRE of sample k of snow rendering `variant` (src/line_render.cpp render_noise)."""
     x = ((variant + 1) * 0x9E3779B9 + k * 0x85EBCA6B) & M32
@@ -145,6 +252,9 @@ def frame_slots(test, frame):
         return [(L, SLOT_ALT if active and alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
     if tid == "S3":
         return [(L, SLOT_ALT if alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
+    if tid == "L1":
+        d = dropout_lines(test, frame)
+        return [(L, SLOT_DROPOUT | (d[L] << 4) if L in d else 0) for L in range(1, LINES_PER_FRAME + 1)]
     return [(L, 0) for L in range(1, LINES_PER_FRAME + 1)]
 
 
@@ -155,6 +265,18 @@ def nominal_samples(flags):
 def frame_start_mod4(test, frame):
     """Nominal samples played before `frame`, mod 4 (sets the subcarrier phase)."""
     return sum(nominal_samples(f) for fr in range(frame) for _, f in frame_slots(test, fr)) % 4
+
+
+def plan(test, n, nsub):
+    """(e, v) of absolute line n as played: timing tests quantize the shift;
+    C3/L2/L3 pick a copy and leave timing alone."""
+    if variant_mode(test) != "timing":
+        return 0, line_variant(test, n, nsub)
+    if test["id"] == "F2":  # exact integer quantization (shifts land on half-steps)
+        q = -((n * 910 * lround(test["params"]["ppm"]) * nsub + 1000000) // 2000000)
+        e2 = q // nsub
+        return 2 * e2, q - e2 * nsub
+    return quantize(shift_ns(test, n), nsub)
 
 
 def quantize(shift, nsub):

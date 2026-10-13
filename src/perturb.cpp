@@ -34,6 +34,15 @@ const Def DEFS[] = {
      {10, -10, 30, -30, 100, -100, 300, -300, 1000, -1000}, {0}, BOTH,
      "locks and follows the input rate; picture steady",
      "locks; output at its own (or the reference) rate, dropping/repeating frames as needed"},
+    {"F2", 0x22, "H not locked to subcarrier", FH_UNLOCKED, "ppm", "", 8,
+     {10, -10, 50, -50, 200, -200, 1000, -1000}, {0}, BOTH,
+     "locks; hue correct (SCH drifts with the input)", "locks; hue correct, output SCH steady"},
+    {"F3", 0x23, "slow H-rate drift", FREQ_DRIFT, "peak_ppm", "period_s", 3, {50, 300, 1000}, {10, 10, 10}, BOTH,
+     "follows the drift; picture steady", "continuous lock; output at its own rate"},
+    {"S1", 0x31, "sync amplitude", SYNC_DEPTH, "sync_ire", "", 5, {30, 25, 20, 15, 10}, {0}, BOTH,
+     "locks; picture steady", "locks; sync regenerated at 40 IRE"},
+    {"S2", 0x32, "slow sync edges", SYNC_EDGE, "rise_ns", "", 3, {250, 500, 1000}, {0}, BOTH,
+     "locks; picture steady (no extra jitter)", "locks; output sync edges nominal"},
     {"S3", 0x33, "missing H syncs", MISSING_SYNC, "lines", "", 5, {1, 2, 5, 10, 20}, {0}, BOTH,
      "flywheels through the missing syncs; no tear", "flywheels through the missing syncs; no tear"},
     {"S4", 0x34, "malformed vertical interval", BAD_VBI, "variant", "", 6, {1, 2, 3, 4, 5, 6}, {0}, FRAME,
@@ -49,6 +58,25 @@ const Def DEFS[] = {
     {"S9", 0x39, "search noise bar", NOISE_BAR, "lines", "", 5, {2, 5, 10, 20, 40}, {0}, BOTH,
      "flywheels through the bar; the rest of the picture straight",
      "stable lock; bar passed or concealed; no roll"},
+    {"C1", 0x41, "burst amplitude", BURST_LEVEL, "burst_pp_ire", "", 4, {30, 20, 10, 60}, {0}, BOTH,
+     "burst and chroma passed, or saturation corrected by ACC",
+     "burst regenerated at 40 IRE p-p; saturation follows burst (ACC) or is unchanged"},
+    {"C2", 0x42, "no burst", NO_BURST, "", "", 1, {0}, {0}, BOTH,
+     "monochrome output, no colour noise", "monochrome output (colour killer), no colour noise"},
+    {"C3", 0x43, "burst/chroma phase jitter", PHASE_JITTER, "rms_deg", "", 4, {2, 5, 10, 20}, {0}, BOTH,
+     "hue steady if it corrects chroma phase per line; otherwise passed",
+     "hue steady if it corrects chroma phase per line; otherwise passed"},
+    {"C4", 0x44, "hue offset", HUE_OFFSET, "deg", "", 4, {5, 10, 20, 45}, {0}, BOTH,
+     "hue offset passed unchanged", "hue offset passed unchanged (proc amp at unity)"},
+    {"L1", 0x51, "dropouts", DROPOUTS, "length_us", "per_field", 5, {2, 5, 10, 20, 50}, {1, 2, 5, 5, 10}, BOTH,
+     "dropouts passed (or concealed, given a DOC signal); timing unaffected",
+     "dropouts passed (or concealed, given a DOC signal); timing unaffected"},
+    {"L2", 0x52, "additive noise", NOISE, "snr_db", "", 5, {40, 34, 28, 22, 16}, {0}, BOTH,
+     "locks; noise passed, not amplified", "locks; noise passed, not amplified"},
+    {"L3", 0x53, "60 Hz hum", HUM, "pp_ire", "", 4, {5, 10, 20, 40}, {0}, BOTH,
+     "hum passed", "hum removed by clamping (DC restore)"},
+    {"L4", 0x54, "video level", VIDEO_LEVEL, "white_pct", "", 4, {80, 90, 110, 120}, {0}, BOTH,
+     "level passed unchanged", "level passed, or corrected by AGC/proc amp"},
 };
 const int NUM_DEFS = sizeof(DEFS) / sizeof(DEFS[0]);
 
@@ -61,7 +89,9 @@ const Def *find(const char *id) {
 bool make(const char *id, int rung, uint32_t seed, Test *out) {
     const Def *d = find(id);
     if (!d || rung < 1 || rung > d->rungs) return false;
-    *out = {d, rung, d->p1[rung - 1], d->p2[rung - 1], seed};
+    *out = {d, rung, d->p1[rung - 1], d->p2[rung - 1], seed, 0};
+    double hz = d->kind == JITTER_SINE ? out->p2 : d->kind == FREQ_DRIFT ? 1.0 / out->p2 : d->kind == HUM ? 60.0 : 0;
+    out->phase_inc = (uint32_t)llround(4294967296.0 * hz / FH_HZ);
     return true;
 }
 
@@ -71,6 +101,11 @@ uint32_t hash32(uint32_t x) {
     x ^= x >> 15; x *= 0x846ca68bu;
     x ^= x >> 16;
     return x;
+}
+
+// Fraction of a cycle (0..1) of line n for a periodic test.
+static inline float cycle(const Test &t, uint32_t n) {
+    return (float)(uint32_t)((uint64_t)n * t.phase_inc) * 2.3283064e-10f;  // / 2^32
 }
 
 // Approximately N(0,1): sum of four 16-bit uniforms (Irwin-Hall), integer
@@ -83,15 +118,19 @@ static float gauss(uint32_t seed, uint32_t n) {
     return ((float)sum - mean) / sd;
 }
 
-float shift_ns(const Test &t, uint32_t n) {
+double shift_ns(const Test &t, uint32_t n) {
+    const double line_ns = 1e9 / FH_HZ;
     switch (t.def->kind) {
-        case JITTER_RANDOM: return t.p1 * gauss(t.seed, n);
-        case JITTER_SINE: {
-            // Phase in double (n grows large), sine in float: double sin is
-            // emulated in software and too slow for 525 lines per frame.
-            double cyc = fmod((double)n * t.p2 / FH_HZ, 1.0);
-            return t.p1 * sinf(2.0f * (float)M_PI * (float)cyc);
+        case FH_UNLOCKED:  // H runs p1 ppm fast: each line starts that much earlier
+            return -(double)n * line_ns * t.p1 * 1e-6;
+        case FREQ_DRIFT: {  // rate offset p1 sin(2 pi t / p2) ppm, integrated: peak p1e-6 * p2/pi s
+            // 1 - cos(x) = 2 sin^2(x/2): keeps precision near x = 0, where cosf ~ 1.
+            float amp_ns = t.p1 * 1e-6f * t.p2 / (2.0f * (float)M_PI) * 1e9f;
+            float s = sinf((float)M_PI * cycle(t, n));
+            return -(double)(amp_ns * 2.0f * s * s);
         }
+        case JITTER_RANDOM: return t.p1 * gauss(t.seed, n);
+        case JITTER_SINE: return t.p1 * sinf(2.0f * (float)M_PI * cycle(t, n));
         case STEP_SQUARE: {
             const uint32_t half = 7867;  // lines in 0.5 s
             return ((n / half) & 1) ? t.p1 * 1000.0f : 0.0f;
@@ -108,6 +147,13 @@ float shift_ns(const Test &t, uint32_t n) {
     }
 }
 
+int32_t fh_unlocked_steps(const Test &t, uint32_t n, int nsub) {
+    // shift = -n * 910 * ppm * 1e-6 samples = -n * 910 * ppm * nsub / 2e6 steps, rounded half up
+    int64_t num = (int64_t)n * 910 * (int64_t)lroundf(t.p1) * nsub + 1000000;
+    int64_t q = num >= 0 ? num / 2000000 : -((-num + 1999999) / 2000000);  // floor division
+    return (int32_t)-q;
+}
+
 float max_delta_samples(const Test &t) {
     const float ns = (float)SAMPLE_NS;
     switch (t.def->kind) {
@@ -116,6 +162,8 @@ float max_delta_samples(const Test &t) {
         case STEP_SQUARE:
         case HEAD_SWITCH:   return t.p1 * 1000.0f / ns;
         case DISPLACED_LINE: return fabsf(t.p1);
+        case FH_UNLOCKED:
+        case FREQ_DRIFT: return fabsf(t.p1) * 1e-6f * (float)(1e9 / FH_HZ) / ns + 1;
         default: return 0;
     }
 }
@@ -198,6 +246,16 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             }
             break;
         }
+        case DROPOUTS: {  // p2 dropouts per field, on lines 30..170 and 292..432 (colour-bar rows)
+            for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, 0);
+            for (int j = 0; j < (int)t.p2; j++) {
+                int L = 30 + (int)(hash32(t.seed * 2654435761u + frame * 64u + (uint32_t)j) % 141);
+                uint8_t f = SLOT_DROPOUT | (uint8_t)((j % DROPOUT_VARIANTS) << 4);
+                if (L - 1 < n) out[L - 1].flags = f;
+                if (L + 261 < n) out[L + 261].flags = f;  // same place in field 2 (line L + 262)
+            }
+            break;
+        }
         case BAD_VBI: {
             int v = (int)t.p1;
             // Variants 4 and 5 alter only some frames; the rest alter every frame.
@@ -209,6 +267,67 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, alt_mods(t, L) ? SLOT_ALT : 0);
     }
     return n;
+}
+
+render::Style base_style(const Test &t) {
+    render::Style s;
+    switch (t.def->kind) {
+        case SYNC_DEPTH:  s.sync_ire = -t.p1; break;
+        case SYNC_EDGE:   s.sync_edge = t.p1 / 0.59f / (float)SAMPLE_NS; break;  // 10-90% of a raised cosine = 0.59 width
+        case BURST_LEVEL: s.burst_amp = t.p1 / 2; break;
+        case NO_BURST:    s.burst_amp = 0; break;
+        case HUE_OFFSET:  s.chroma_rot_deg = t.p1; break;
+        case NOISE:       s.noise_rms_ire = 100.0f / powf(10.0f, t.p1 / 20.0f); break;
+        case VIDEO_LEVEL: s.video_gain = t.p1 / 100.0f; break;
+        default: break;
+    }
+    return s;
+}
+
+VariantMode variant_mode(const Test &t) {
+    switch (t.def->kind) {
+        case PHASE_JITTER: return VM_CARRIER;
+        case NOISE:        return VM_NOISE;
+        case HUM:          return VM_DC;
+        default:           return VM_TIMING;
+    }
+}
+
+static int clamp_v(long v, int nsub) { return v < 0 ? 0 : (v >= nsub ? nsub - 1 : (int)v); }
+
+int line_variant(const Test &t, uint32_t n, int nsub) {
+    if (nsub <= 1) return 0;
+    switch (variant_mode(t)) {
+        case VM_CARRIER: {  // nearest of nsub phases spanning +-3.47 sigma
+            float step = 2 * 3.47f * t.p1 / (nsub - 1);
+            return clamp_v(lroundf(t.p1 * gauss(t.seed, n) / step + (nsub - 1) / 2.0f), nsub);
+        }
+        case VM_NOISE: return (int)(hash32(t.seed * 0x9E3779B9u + n) % (uint32_t)nsub);
+        case VM_DC: {  // nearest of nsub levels across the hum's p-p range
+            float h = 0.5f * sinf(2.0f * (float)M_PI * cycle(t, n));  // in units of p-p
+            return clamp_v(lroundf((h + 0.5f) * (nsub - 1)), nsub);
+        }
+        default: return 0;
+    }
+}
+
+float variant_value(const Test &t, int v, int nsub) {
+    float mid = (nsub - 1) / 2.0f;
+    switch (variant_mode(t)) {
+        case VM_CARRIER: return nsub > 1 ? (v - mid) * 2 * 3.47f * t.p1 / (nsub - 1) : 0;
+        case VM_DC:      return nsub > 1 ? -0.5f * t.p1 + v * t.p1 / (nsub - 1) : 0;
+        case VM_NOISE:   return (float)(v + 1);
+        default:         return 0;
+    }
+}
+
+void dropout_span(const Test &t, int var, float *k0, float *k1) {
+    // Start at a fraction of the room left in the active window, so even a
+    // 50 us dropout stays inside the picture.
+    static const float POS[DROPOUT_VARIANTS] = {0.15f, 0.35f, 0.55f, 0.75f};
+    float len = t.p1 * (float)US, room = (float)ACTIVE_WIDTH - len;
+    *k0 = (float)ACTIVE_START + POS[var] * (room > 0 ? room : 0);
+    *k1 = *k0 + len;
 }
 
 }  // namespace perturb

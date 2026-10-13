@@ -52,6 +52,53 @@ def frame_events(frames):
     }
 
 
+FSC = 315e6 / 88
+
+
+def picture_metrics(x, hs, fs, tip, blank):
+    """Burst, hue, saturation, levels and noise on the output's colour-bar lines (IRE).
+
+    For the C and L tests: what the TBC did to colour and level. IRE are
+    scaled from the output's own sync (40 IRE), so an unterminated chain
+    (double amplitude) doesn't skew them.
+    """
+    us = fs / 1e6
+    ire = lambda v: (v - blank) * 40.0 / (blank - tip)
+    bar = lambda b, a=0.3, z=0.7: (9.4 + 52.6 * (b + a) / 7, 9.4 + 52.6 * (b + z) / 7)
+
+    def demod(s, t0, t1):
+        i0, i1 = int(s + t0 * us), int(s + t1 * us)
+        seg = x[i0:i1]
+        lo = np.exp(-2j * np.pi * FSC * (np.arange(i0, i1) - s) / fs)
+        return float(ire(seg.mean())), 2 * np.mean((seg - seg.mean()) * lo) * 40.0 / (blank - tip)
+
+    rows = []
+    for s in hs:
+        if int(s + 64 * us) >= len(x) or s < 2 * us:
+            continue
+        g_y, _ = demod(s, *bar(0))
+        b_y, _ = demod(s, *bar(6))
+        if not (g_y > 55 and b_y < 30 and g_y > b_y + 30):   # top colour-bar rows: gray high, blue low
+            continue
+        _, burst = demod(s, 5.8, 7.6)
+        y_y, yel = demod(s, *bar(1))
+        i0, i1 = int(s + bar(0, 0.15, 0.85)[0] * us), int(s + bar(0, 0.15, 0.85)[1] * us)
+        rows.append((abs(burst) * 2, np.degrees(np.angle(yel) - np.angle(burst)) + 180, abs(yel) * 2, g_y,
+                     float(ire(x[int(s + 8.2 * us):int(s + 9.1 * us)].mean())), float(np.std(ire(x[i0:i1])))))
+    if len(rows) < 10:
+        return None
+    a = np.array(rows)
+    hue = (a[:, 1] + 180) % 360 - 180          # keep the wrap away from 167 deg
+    hue = (hue - np.median(hue) + 180) % 360 - 180 + np.median(hue)
+    return {"lines": len(rows),
+            "burst_pp_ire": float(np.median(a[:, 0])),
+            "yellow_hue_deg": float(np.median(hue) % 360), "yellow_hue_jitter_deg": float(np.std(hue)),
+            "yellow_chroma_pp_ire": float(np.median(a[:, 2])),
+            "gray_ire": float(np.median(a[:, 3])),
+            "blanking_wander_ire": float(np.std(a[:, 4])),
+            "gray_noise_ire_rms": float(np.median(a[:, 5]))}
+
+
 def excerpt(x, hs, us, start_line, n_bins=220):
     """Min/max envelope of one line (2 us before sync to 64 us after) for plotting.
 
@@ -130,6 +177,7 @@ def analyze(run, ch=1):
                         break
                     if d:
                         spurious += 1
+    out["picture"] = picture_metrics(x, hs, fs, tip, blank) if len(hs) > 100 else None
     frames = [int(m[1][2]) for m in marks]
     offs = [m[2] for m in marks]
     lines = [m[3] for m in marks]
@@ -160,6 +208,12 @@ def print_report(r):
               f"{h['irregular_intervals']} irregular intervals")
     fl = r["fields"]
     print(f"  fields: {fl['count']} V-syncs, lengths (lines) {fl['lengths']}")
+    pc = r.get("picture")
+    if pc:
+        print(f"  picture: burst {pc['burst_pp_ire']:.1f} IRE p-p, yellow hue {pc['yellow_hue_deg']:.1f} deg "
+              f"(±{pc['yellow_hue_jitter_deg']:.1f}), yellow chroma {pc['yellow_chroma_pp_ire']:.1f} IRE p-p, "
+              f"gray {pc['gray_ire']:.1f} IRE, blanking wander {pc['blanking_wander_ire']:.2f} IRE rms, "
+              f"noise {pc['gray_noise_ire_rms']:.2f} IRE rms")
     m = r["markers"]
     if not m["decoded"]:
         print("  markers: none decoded")

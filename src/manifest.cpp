@@ -43,7 +43,8 @@ void print_manifest(Print &o) {
     bool any = false;
     if (*t.def->p1_name) { o.printf("\"%s\":%g", t.def->p1_name, t.p1); any = true; }
     if (*t.def->p2_name) o.printf("%s\"%s\":%g", any ? "," : "", t.def->p2_name, t.p2);
-    o.printf("},\"seed\":%u,\"model\":\"perturb/1\",\"chroma\":\"%s\",\"targets\":[", (unsigned)t.seed,
+    o.printf("},\"seed\":%u,\"phase_inc\":%u,\"model\":\"perturb/1\",\"chroma\":\"%s\",\"targets\":[",
+             (unsigned)t.seed, (unsigned)t.phase_inc,
              gen::chroma_follows() ? "follows_timing" : "colour_under");
     // "line,frame" -> ["line_tbc","frame_tbc"]
     const char *p = t.def->targets;

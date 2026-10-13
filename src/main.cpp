@@ -133,7 +133,7 @@ static void handle(String line) {
     } else if (cmd == "pdump") {
         unsigned frame = 0, first = 0, count = ntsc::LINES_PER_FRAME;
         sscanf(arg.c_str(), "%u %u %u", &frame, &first, &count);
-        for (unsigned L = first; L < first + count && L < (unsigned)ntsc::LINES_PER_FRAME; L++) {
+        for (unsigned L = first; L < first + count && L < 600; L++) {  // frames can run past 525 lines (S6, S8)
             gen::LinePlan p = gen::plan(frame * ntsc::LINES_PER_FRAME + L);
             Serial.printf("%u %u %.3f %d %d %.3f\n", frame, L + 1, p.shift_ns, (int)p.e, p.v, gen::plan_shift_ns(p));
         }

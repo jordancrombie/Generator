@@ -46,7 +46,10 @@ constexpr int ACTIVE_ROWS = 486;  // D1 numbering: F1 lines 21-263, F2 283-525
 
 // Line buffers place the sync 50% point LINE_ORIGIN samples in, so each
 // line starts at blanking and can be lengthened by padding blank at its end.
-constexpr double LINE_ORIGIN = 4.0;
+// 16 samples leaves room for the slowest sync edge (S2: 1000 ns = 24-sample
+// edge, half of it before the sync point); a multiple of 4 keeps the
+// subcarrier phase at the sync point unchanged.
+constexpr double LINE_ORIGIN = 16.0;
 constexpr int    MAX_EXT     = 200;      // max samples a line may be lengthened
 constexpr int    MIN_LEN     = 600;      // shortest line the ring will play
 constexpr double SAMPLE_NS   = 1e9 / SAMPLE_HZ;

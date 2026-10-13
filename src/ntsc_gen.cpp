@@ -44,6 +44,8 @@ static int s_nbases;
 static uint16_t **s_pool;                // [base * nsub + v]
 static uint16_t *s_marker[2][MAX_MARKERS];
 static uint16_t *s_noise[perturb::NOISE_VARIANTS];  // snow lines (S9), only when the test uses them
+static uint16_t *s_dropout[perturb::DROPOUT_VARIANTS][2];  // bar lines with a dropout (L1), [variant][phase]
+static render::Style s_style;            // the test's static rendering style
 static int s_nsub = 1, s_ext = 0, s_cap = SAMPLES_PER_LINE;
 
 static SemaphoreHandle_t s_lock;
@@ -63,19 +65,40 @@ static bool s_chroma_follows = false;    // default colour-under (VHS/Betamax)
 
 // ---- Placement ------------------------------------------------------------------
 LinePlan plan(uint32_t n) {
-    float s = perturb::shift_ns(s_test, n);
-    float step = 2.0f / s_nsub;
-    int32_t q = (int32_t)lroundf(s / (float)SAMPLE_NS / step);
+    if (perturb::variant_mode(s_test) != perturb::VM_TIMING)  // copies differ in phase/noise/DC, not timing
+        return {0, (uint8_t)perturb::line_variant(s_test, n, s_nsub), 0.0f};
+    double s = perturb::shift_ns(s_test, n);
+    // Steps of 2/nsub samples. One double multiply per line (no division:
+    // the ESP32 emulates double math in software).
+    const double steps_per_ns = s_nsub / (2.0 * SAMPLE_NS);
+    int32_t q = s_test.def->kind == perturb::FH_UNLOCKED ? perturb::fh_unlocked_steps(s_test, n, s_nsub)
+                                                         : (int32_t)llround(s * steps_per_ns);
     int32_t e2 = q >= 0 ? q / s_nsub : -((-q + s_nsub - 1) / s_nsub);
-    return {2 * e2, (uint8_t)(q - e2 * s_nsub), s};
+    return {2 * e2, (uint8_t)(q - e2 * s_nsub), (float)s};
 }
 
 float plan_shift_ns(const LinePlan &p) {
+    if (perturb::variant_mode(s_test) != perturb::VM_TIMING) return 0.0f;
     return (float)((p.e + p.v * 2.0 / s_nsub) * SAMPLE_NS);
 }
 
-static inline float origin_of(int v) { return (float)LINE_ORIGIN + v * 2.0f / s_nsub; }
-static inline float carrier_of(int v) { return s_chroma_follows ? v * 2.0f / s_nsub : 0.0f; }
+// What pre-rendered copy v of a line looks like, by the test's variant mode.
+static inline bool timing_copies() { return perturb::variant_mode(s_test) == perturb::VM_TIMING; }
+static inline float origin_of(int v) { return (float)LINE_ORIGIN + (timing_copies() ? v * 2.0f / s_nsub : 0.0f); }
+static inline float carrier_of(int v) {
+    switch (perturb::variant_mode(s_test)) {
+        case perturb::VM_TIMING:  return s_chroma_follows ? v * 2.0f / s_nsub : 0.0f;
+        case perturb::VM_CARRIER: return perturb::variant_value(s_test, v, s_nsub) / 90.0f;  // degrees -> samples
+        default:                  return 0.0f;
+    }
+}
+static render::Style style_of(int v, uint8_t mods) {
+    render::Style st = s_style;
+    st.mods = mods;
+    if (perturb::variant_mode(s_test) == perturb::VM_DC) st.dc_ire = perturb::variant_value(s_test, v, s_nsub);
+    if (perturb::variant_mode(s_test) == perturb::VM_NOISE) st.noise_seed = (uint32_t)perturb::variant_value(s_test, v, s_nsub);
+    return st;
+}
 
 static void render_marker(uint16_t *buf, uint32_t frame, int phase, int v) {
     Segment raw[48];
@@ -83,7 +106,7 @@ static void render_marker(uint16_t *buf, uint32_t frame, int phase, int v) {
     uint32_t w = marker::word(s_test.def->code, (uint8_t)s_test.rung, (uint16_t)frame);
     int n = marker::segments(w, raw, 48);
     int m = place_segments(raw, n, H_ACTIVE, H_ACTIVE, segs, 48);
-    render_line(buf, s_cap, H_BLANK, H_BLANK, phase, origin_of(v), carrier_of(v), segs, m, s_levels);
+    render_line(buf, s_cap, H_BLANK, H_BLANK, phase, origin_of(v), carrier_of(v), segs, m, s_levels, style_of(v, 0));
 }
 
 // Write frame number `frame` into half `h` of the ring.
@@ -113,6 +136,8 @@ static void write_half(int h, uint32_t frame) {
             buf = mb;
         } else if (slots[i].flags & perturb::SLOT_NOISE) {
             buf = s_noise[perturb::noise_variant(frame, i)];
+        } else if (slots[i].flags & perturb::SLOT_DROPOUT) {
+            buf = s_dropout[(slots[i].flags >> 4) & 3][phase >> 1];
         } else {
             int alt = (slots[i].flags & perturb::SLOT_ALT) ? 1 : 0;
             buf = s_pool[s_base_idx[line][alt][phase >> 1] * s_nsub + p[i].v];
@@ -174,6 +199,8 @@ static void free_pool() {
     for (auto &half : s_marker)
         for (auto &m : half) { heap_caps_free(m); m = nullptr; }
     for (auto &nz : s_noise) { heap_caps_free(nz); nz = nullptr; }
+    for (auto &var : s_dropout)
+        for (auto &d : var) { heap_caps_free(d); d = nullptr; }
 }
 
 static int find_base(const Base &b) {
@@ -203,6 +230,7 @@ static bool rebuild() {
     free_pool();
 
     const Pattern &pat = PATTERNS[s_pattern];
+    s_style = perturb::base_style(s_test);
     s_nbases = 0;
     for (int L = 1; L <= LINES_PER_FRAME; L++) {
         LineSpec ls = line_spec(L);
@@ -232,7 +260,7 @@ static bool rebuild() {
     if (s_ext > MAX_EXT) s_ext = MAX_EXT;
     s_cap = SAMPLES_PER_LINE + s_ext;
     long budget = (long)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) - HEAP_RESERVE -
-                  (2L * MAX_MARKERS + perturb::NOISE_VARIANTS) * s_cap * 2;
+                  (2L * MAX_MARKERS + perturb::NOISE_VARIANTS + 2 * perturb::DROPOUT_VARIANTS) * s_cap * 2;
     s_nsub = 8;
     while (s_nsub > 1 && (long)s_nbases * s_nsub * s_cap * 2 > budget) s_nsub /= 2;
 
@@ -250,13 +278,30 @@ static bool rebuild() {
         for (int v = 0; v < s_nsub; v++) {
             uint16_t *buf = alloc_line();
             if (!buf) { ok = false; break; }
-            render_line(buf, s_cap, b.a, b.b, b.phase, origin_of(v), carrier_of(v), segs, nseg, s_levels, b.mods);
+            render_line(buf, s_cap, b.a, b.b, b.phase, origin_of(v), carrier_of(v), segs, nseg, s_levels, style_of(v, b.mods));
             s_pool[i * s_nsub + v] = buf;
         }
     }
     for (auto &half : s_marker)
         for (auto &m : half)
             if (ok && !(m = alloc_line())) ok = false;
+    if (s_test.def->kind == perturb::DROPOUTS) {
+        // A colour-bar line (line 50's content) with a stretch of snow over it.
+        LineSpec ls = line_spec(50);
+        Segment raw[64];
+        ActiveSeg segs[64];
+        int nseg = place_segments(raw, pat.segments(pat.row_key(ls.row), raw, 64), ls.a, ls.b, segs, 64);
+        for (int j = 0; ok && j < perturb::DROPOUT_VARIANTS; j++)
+            for (int ph = 0; ok && ph < 2; ph++) {
+                uint16_t *d = s_dropout[j][ph] = alloc_line();
+                if (!d) { ok = false; break; }
+                render_line(d, s_cap, ls.a, ls.b, 2 * ph, origin_of(0), carrier_of(0), segs, nseg, s_levels, style_of(0, 0));
+                float k0, k1;
+                perturb::dropout_span(s_test, j, &k0, &k1);
+                int a0 = (int)lroundf((float)LINE_ORIGIN + k0), a1 = (int)lroundf((float)LINE_ORIGIN + k1);
+                overlay_snow(d, a0, a1 < s_cap ? a1 : s_cap, 100u + (uint32_t)j, s_levels);
+            }
+    }
     if (s_test.def->kind == perturb::NOISE_BAR)
         for (int j = 0; ok && j < perturb::NOISE_VARIANTS; j++) {
             if (!(s_noise[j] = alloc_line())) ok = false;

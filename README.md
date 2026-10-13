@@ -12,19 +12,21 @@ The test catalog, scoring approach and grader contract are in the design doc,
 [TBC Test Catalog & Grader Contract](https://claude.ai/code/artifact/45d38c23-276f-4e00-b547-f803ce8926ae).
 Measured hardware and toolchain facts (settling times, quirks, pitfalls) are in
 [docs/bench-notes.md](docs/bench-notes.md). Read it before changing the tools.
+Open work is in [TODO.md](TODO.md).
 
 ## Status (2026-10-13)
 
 | Area | State |
 |---|---|
 | Colour bars, first light | **Done.** SMPTE and EIA bars, staircase, flat, crosshatch. Hue within 1.5° and luma within 0.5 IRE at the DAC |
-| Timing tests (H1–H5, F1) | **Built and verified** against the reference model. F1 not yet measured on the scope |
-| Structure tests (S3–S9) | **Built and verified**; observed through the TBC on CH1. S4, S8 and S9 target frame synchronisers |
+| Timing tests (H1–H5, F1–F3) | **Built and verified** against the reference model. F1 not yet measured on the scope |
+| Structure tests (S1–S9) | **Built and verified**; observed through the TBC on CH1. S4, S8 and S9 target frame synchronisers |
+| Colour and level tests (C1–C4, L1–L4) | **Built and verified**; observed through the TBC on CH1, with picture metrics (burst, hue, saturation, level, noise, hum) |
 | Device tagging and reports | **Done.** `--dut`/`--note` on every run; optional `--html` report |
 | Colour-under (VHS/Betamax) | **Default.** Direct colour (U-matic/1") available with `chroma follows` |
 | Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 |
 | CH2 reference and level calibration | **Waiting on hardware** (BNC tees and a 75 Ω terminator) |
-| Remaining tests | S1, S2 (sync), C1–C4 (colour), F2, F3, L1–L4 (levels, noise, dropouts); H6 velocity error (line TBCs, for the tape-deck phase); latency in frames (needs CH2) |
+| Still to do | See [TODO.md](TODO.md): CH2 calibration, latency, H6 velocity error, the AVT-8710 fault hunt |
 | Grader | Not part of this repo. `tools/perturb_model.py` is its reference for what was sent |
 
 ## Wiring
@@ -104,6 +106,25 @@ through.
 | S7 | dropped field: every N frames field 2 is missing | frame | 60, 30, 15, 6, 2 |
 | S8 | field-length wow: lines added/removed per field, peak @ Hz | frame | 1@0.5, 2@1, 5@1, 10@2, 20@2 |
 | S9 | search noise bar: a band of sync-less snow moving 23 lines a frame, lines | both | 2, 5, 10, 20, 40 |
+| S1 | sync amplitude, IRE (40 nominal) | both | 30, 25, 20, 15, 10 |
+| S2 | slow sync edges, 10–90 % rise, ns | both | 250, 500, 1000 |
+| F2 | H rate against a fixed subcarrier, ppm (SCH drifts) | both | ±10, ±50, ±200, ±1000 |
+| F3 | slow H-rate drift, peak ppm over a 10 s period | both | 50, 300, 1000 |
+| C1 | burst amplitude, IRE p-p (40 nominal) | both | 30, 20, 10, 60 |
+| C2 | no burst | both | 1 |
+| C3 | burst + chroma phase jitter, line to line, rms degrees | both | 2, 5, 10, 20 |
+| C4 | picture hue offset against burst, degrees | both | 5, 10, 20, 45 |
+| L1 | dropouts (snow over part of a line), µs × per field | both | 2×1, 5×2, 10×5, 20×5, 50×10 |
+| L2 | additive noise, SNR dB (100 IRE / rms) | both | 40, 34, 28, 22, 16 |
+| L3 | 60 Hz hum, IRE p-p | both | 5, 10, 20, 40 |
+| L4 | video level, % | both | 80, 90, 110, 120 |
+
+C3, L2 and L3 reuse each line's pre-rendered copies (normally sub-sample
+timing shifts) as phase, noise or DC versions. The resolution is therefore
+`subsample_steps` levels (4 for SMPTE bars), and the manifest records the
+value of each. F2 and F3 are done in the timing model, not by retuning the
+clock. The 8-bit DAC's own quantization noise is about 0.55 IRE rms (~45 dB),
+the floor for L2.
 
 A dropped field leaves a lone half-line. It plays as 456 samples rather than
 455, because the DAC consumes samples in pairs (+35 ns at the drop).
@@ -183,6 +204,17 @@ measured yet.
 | S4 V-sync missing in every field | Still outputs standard fields in order, but with no vertical reference the picture sits far lower: marker at line 201–209 after V-sync instead of 15, landing somewhere different each time it locks |
 | S8 field-length wow (±20 lines at 2 Hz) | Occasionally repeats a field to keep its output standard |
 | S9 noise bar (20 lines) | Every field passed in order |
+| C1 burst 10 / 60 IRE | Burst regenerated at ~43 IRE; chroma ×1.7 (partial ACC) with ~22° hue error and jitter / ×0.65 (ACC) |
+| C2 no burst | **No colour killer:** burst inserted, chroma passed with a random hue |
+| C3 phase jitter 10° / 20° rms | Passed: output hue wanders ±9° / ±18° (no per-line chroma phase correction) |
+| C4 hue +20° | Passed unchanged |
+| L2 noise 4 IRE rms | ~2.6 IRE rms out (some noise reduction or bandwidth limiting) |
+| L3 hum 20 / 40 IRE p-p | Blanking clamped flat, but the gray bar reads higher (84 / 95 IRE vs 79); not yet explained |
+| L4 level 80 % / 120 % | Passed unchanged (no AGC) |
+
+Picture figures are relative to the TBC's own V0 output (gray 79 IRE, yellow
+chroma 70 IRE p-p, burst 43 IRE). CH1 is still unterminated, so absolute
+levels wait for the tees.
 
 In every run the output stayed standard: 262.5 lines per field and 0.4–0.6 ns
 rms line jitter.
