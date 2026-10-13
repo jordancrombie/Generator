@@ -1,21 +1,25 @@
-"""Run one test rung on the generator and capture CH1/CH2 with its manifest.
+"""Run one test rung on the generator, capture CH1/CH2 and report on it.
 
-usage: run_test.py TEST [RUNG] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+usage: run_test.py TEST [RUNG] [--keep] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
 
-Writes DIR/<timestamp>_<test>_r<rung>/ containing
+Each run is saved to DIR/<timestamp>_<test>_r<rung>/ containing
   manifest.json  the generator's manifest plus capture metadata
   capture.npz    ch1, ch2 (int16 raw), scale, offset, rate
+then observe_tbc's report is printed and the folder is deleted, unless
+--keep is given (or the report fails, so the run can be debugged). A capture
+is about 100 MB per 0.5 s at 50 MS/s.
 
 The scope's input settling and the TBC's lock time overlap: the scope is
 opened first, then the test starts, and the capture waits for whichever is
 later. run_suite.py runs many rungs on one scope session.
 """
-import argparse, json, os, time
+import argparse, json, os, shutil, time
 
 import numpy as np
 
 import dwf_scope
 from gen_cmd import open_gen, request
+from observe_tbc import report
 
 RUNS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runs")
 
@@ -50,6 +54,19 @@ def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS):
     return os.path.normpath(run), cap
 
 
+def finish(run, keep=False):
+    """Print the run's report, then delete it unless `keep` (or the report failed)."""
+    try:
+        report(run)
+    except Exception as e:  # keep the evidence when something goes wrong
+        print(f"  report failed ({type(e).__name__}: {e}); kept {run}")
+        return
+    if keep:
+        print(f"  kept {run}")
+    else:
+        shutil.rmtree(run)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("test")
@@ -59,6 +76,7 @@ def main():
     ap.add_argument("--seconds", type=float, default=0.5)
     ap.add_argument("--settle", type=float, default=2.0, help="seconds for the TBC to lock before capturing")
     ap.add_argument("--out", default=RUNS)
+    ap.add_argument("--keep", action="store_true", help="keep the capture and manifest instead of deleting them")
     a = ap.parse_args()
 
     with dwf_scope.Scope(a.rate, a.seconds) as scope:  # starts settling while the test starts
@@ -67,7 +85,7 @@ def main():
     for ch in (0, 1):
         v = dwf_scope.volts(cap, ch)
         print(f"ch{ch + 1}: {v.min():.3f} .. {v.max():.3f} V")
-    print(f"saved {run}")
+    finish(run, a.keep)
 
 
 if __name__ == "__main__":

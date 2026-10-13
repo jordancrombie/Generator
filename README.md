@@ -111,18 +111,21 @@ sockets, so look it up:
 The host tools need `numpy` and `pyserial`.
 
 ```
-python3 tools/run_suite.py --observe            # smoke set: one rung of every test (~3 s each)
+python3 tools/run_suite.py                      # smoke set: one rung of every test (~3 s each)
 python3 tools/run_suite.py H1:all S7:4-5        # chosen tests and rungs on one scope session
 python3 tools/run_test.py H1 4                  # a single rung
+python3 tools/run_test.py H1 4 --keep           # ...and keep its capture for debugging
 python3 tools/observe_tbc.py runs/<run>         # what the TBC passed, dropped or repeated
 python3 tools/verify_timing.py                  # check the firmware against the reference model (~25 s)
 python3 tools/check_lines.py                    # check colour bars as rendered
 ```
 
-Each run writes `runs/<timestamp>_<test>_r<rung>/` containing `manifest.json`
-and `capture.npz` (raw int16 per channel, volts = raw × scale + offset).
-`runs/` is not committed, and it grows fast: 0.5 s at 50 MS/s is 100 MB per
-run. Where the time goes is broken down in
+Every run prints `observe_tbc`'s report on the TBC output. The capture is
+then **deleted by default**. With `--keep` (on `run_test.py` or
+`run_suite.py`), the run stays in `runs/<timestamp>_<test>_r<rung>/` as
+`manifest.json` plus `capture.npz` (raw int16 per channel, volts = raw ×
+scale + offset). A run whose report fails is always kept. Kept runs are
+large, 100 MB per 0.5 s at 50 MS/s, and `runs/` is not committed. Where the time goes is broken down in
 [docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
 ## Serial commands (921600 baud)

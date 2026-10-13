@@ -22,8 +22,8 @@ Before the two waits overlapped and the scope stayed open, each run took
 serial reads; at 921600 baud with non-blocking reads it takes 24 s.
 
 **Disk:** a capture is 4 bytes × rate × seconds (two int16 channels), so
-0.5 s at 50 MS/s is 100 MB per run. `runs/` grows quickly. Lower `--rate` or
-`--seconds` for long suites.
+0.5 s at 50 MS/s is 100 MB per run. About 25 exploratory runs filled 2.6 GB,
+so runs are now deleted after their report unless `--keep` is given.
 
 ## ADP2230 and the WaveForms SDK
 
