@@ -3,35 +3,21 @@
 Decodes sync width, burst amplitude/phase and per-bar luma/chroma (hue relative
 to burst) for the SMPTE bars pattern.
 """
-import sys, time, math
+import json, math
 import numpy as np
-import serial
 
-import glob; PORT = sys.argv[1] if len(sys.argv) > 1 else sorted(glob.glob("/dev/cu.wchusbserial*"))[0]
+from gen_cmd import dump_line, open_gen, request
+
 US = 14.31818181818
 
+
 def dump(s, idx):
-    s.reset_input_buffer(); s.write(f"dump {idx}\n".encode())
-    buf = b""; t = time.time()
-    while time.time() - t < 3:
-        buf += s.read(4096)
-        if buf.count(b"\n") >= 17 and len(buf) > 1900: break
-    lines = buf.decode().split("\n")
-    i = next(k for k, l in enumerate(lines) if l.startswith(f"line {idx} "))
-    n = int(lines[i].split("n=")[1])
-    hexs = "".join(l.strip() for l in lines[i + 1:])[: 2 * n]
-    codes = np.array([int(hexs[j:j + 2], 16) for j in range(0, len(hexs), 2)], float)
     # Buffers put sync LINE_ORIGIN samples in; re-base so sync is at sample 0.
-    return codes[ORIGIN:ORIGIN + 910]
+    return dump_line(s, idx)[ORIGIN:ORIGIN + 910]
 
-def info(s):
-    s.reset_input_buffer(); s.write(b"info\n"); time.sleep(0.3)
-    import json
-    for l in s.read(4096).decode().splitlines():
-        if l.startswith("{"): return json.loads(l)
 
-s = serial.Serial(PORT, 115200, timeout=0.2)
-cfg = info(s)
+s = open_gen()
+cfg = json.loads(next(l for l in request(s, "info", until="}\n").splitlines() if l.startswith("{")))
 ORIGIN = int(cfg.get("line_origin_samples", 0))
 sync_c, white_c = cfg["sync_code"], cfg["white_code"]
 ire = lambda c: (c - sync_c) * 140.0 / (white_c - sync_c) - 40.0

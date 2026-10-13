@@ -12,9 +12,8 @@ For each test: freeze the ring, then check
 """
 import json, sys, time
 import numpy as np
-import serial
 import perturb_model as pm
-from gen_cmd import port
+from gen_cmd import dump_line, open_gen, request
 
 US = pm.SAMPLE_HZ / 1e6
 ORIGIN = 4.0
@@ -29,31 +28,13 @@ HALF_BASE = 600
 
 class Gen:
     def __init__(self):
-        self.s = serial.Serial(port(), 115200, timeout=0.5)
-        time.sleep(0.2)
+        self.s = open_gen()
 
-    def cmd(self, c, until=None, wait=0.4):
-        self.s.reset_input_buffer()
-        self.s.write((c + "\n").encode())
-        buf, t = b"", time.time()
-        while time.time() - t < 15:
-            buf += self.s.read(65536)
-            if until is None and time.time() - t > wait:
-                break
-            if until is not None and until.encode() in buf:
-                break
-        return buf.decode(errors="replace")
+    def cmd(self, c, until="\n", timeout=15.0):
+        return request(self.s, c, until=until, timeout=timeout)
 
     def dump(self, idx):
-        out = self.cmd(f"dump {idx}", until="\n", wait=0)
-        t = time.time()
-        while out.count("\n") < 2 + 17 and time.time() - t < 3:
-            out += self.s.read(65536).decode(errors="replace")
-        lines = out.splitlines()
-        i = next(k for k, l in enumerate(lines) if l.startswith(f"line {idx} "))
-        n = int(lines[i].split("n=")[1])
-        hexs = "".join(l.strip() for l in lines[i + 1:])[: 2 * n]
-        return np.array([int(hexs[j:j + 2], 16) for j in range(0, len(hexs), 2)], float)
+        return dump_line(self.s, idx)
 
 
 def sync_pos(codes, blank, tip):
@@ -76,9 +57,9 @@ def main():
     g = Gen()
     ok_all = True
     for tid, rung, seed, mode, half in TESTS:
-        assert g.cmd(f"chroma {mode}", wait=1.0).strip().endswith("ok"), mode
-        assert g.cmd(f"test {tid} {rung} {seed}", wait=1.0).strip().endswith("ok"), tid
-        time.sleep(1.0)
+        assert g.cmd(f"chroma {mode}").strip().endswith("ok"), mode
+        assert g.cmd(f"test {tid} {rung} {seed}").strip().endswith("ok"), tid
+        time.sleep(0.2)  # let a few frames go by after the rebuild
         fr = g.cmd("hold 1", until="frames").split("frames")[1].split()
         frame = int(fr[half])
         order_ok = abs(int(fr[0]) - int(fr[1])) == 1  # halves hold consecutive frames
@@ -133,7 +114,7 @@ def main():
                 lv["sync_code"] + 110 * (lv["white_code"] - lv["sync_code"]) / 140
             cells = [c[int(round(st + (10.5 + 1.4 * (i + 0.5)) * US))] for i in range(36)]
             marks.append(pm.decode_marker([1 if x > (lo + hi) / 2 else 0 for x in cells]))
-        g.cmd("hold 0")
+        g.cmd("hold 0", until="frames")
 
         good = tgt_err < 0.02 * max(1.0, test["params"].get("peak_ns", 1)) and ev_bad == 0 and len_bad == 0 \
             and (len(pos_err) == 0 or np.max(np.abs(pos_err)) < 0.15) and np.max(np.abs(ph_err)) < 4 and nosync_ok \
@@ -143,8 +124,8 @@ def main():
               f"target err {tgt_err:.4f} ns, e/v bad {ev_bad}, length bad {len_bad}, "
               f"sync pos err {np.max(np.abs(pos_err)) if len(pos_err) else 0:.3f} smp, "
               f"burst phase err {np.max(np.abs(ph_err)):.1f} deg, no-sync ok {nosync_ok}, halves {fr[0]}/{fr[1]}, markers {marks}")
-    g.cmd("chroma under", wait=1.0)
-    g.cmd("test V0", wait=1.0)
+    g.cmd("chroma under")
+    g.cmd("test V0")
     print("ALL PASS" if ok_all else "SOME FAILED")
 
 

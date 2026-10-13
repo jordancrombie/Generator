@@ -35,15 +35,12 @@ def sync_pulses(x, us):
     return f + (x[f] - mid) / (x[f] - x[f + 1]), w
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("run")
-    ap.add_argument("--ch", type=int, default=1)
-    a = ap.parse_args()
-    x, fs, man = load(a.run, a.ch)
+def report(run, ch=1):
+    """Print what the TBC output in this run (from channel `ch`)."""
+    x, fs, man = load(run, ch)
     us = fs / 1e6
     t = man["test"]
-    print(f"{t['id']} r{t['rung']} {t['params']} ({t.get('chroma', '')}), CH{a.ch}, {len(x) / fs:.3f} s")
+    print(f"{t['id']} r{t['rung']} {t['params']} ({t.get('chroma', '')}), CH{ch}, {len(x) / fs:.3f} s")
 
     ft, w = sync_pulses(x, us)
     hs = ft[(w > 3.5) & (w < 6)]                      # horizontal syncs
@@ -96,6 +93,14 @@ def main():
     print(f"  frame counter {frames[0]}..{frames[-1]}, step histogram (0 = same frame's other field) {dict(steps)}")
     seq = " ".join(str(f) for f in frames[:40])
     print(f"  sequence: {seq}{' ...' if len(frames) > 40 else ''}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("run")
+    ap.add_argument("--ch", type=int, default=1)
+    a = ap.parse_args()
+    report(a.run, a.ch)
 
 
 if __name__ == "__main__":

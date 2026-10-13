@@ -1,8 +1,13 @@
 """ADP2230 scope capture via the WaveForms SDK.
 
-capture() records both channels simultaneously, downloads raw 16-bit samples
-in chunks (a 64 M-sample capture as doubles would need 1 GB), and returns
-them with the raw -> volts scale fitted from a short double-precision read.
+Scope keeps the device open across captures. Its inputs need about 2 s to
+settle after a range or offset change (see docs/bench-notes.md), so the
+settle clock starts when Scope is opened and only the first capture waits for
+it; callers can do other work (such as letting a TBC lock) in the meantime.
+
+Captures record both channels simultaneously and download raw 16-bit samples
+in chunks (a 64 M-sample capture as doubles would need 1 GB), with the
+raw -> volts scale fitted from a short double-precision read.
 """
 import time
 from ctypes import byref, c_byte, c_double, c_int, c_short, cdll
@@ -11,29 +16,42 @@ import numpy as np
 
 dwf = cdll.LoadLibrary("/Library/Frameworks/dwf.framework/dwf")
 CHUNK = 1 << 20
+SETTLE_S = 2.0  # input stage settling after a range/offset change
 
 
-def capture(rate=50e6, seconds=0.25, vrange=5.0, settle=2.0):
-    """Returns dict(raw=int16[2, n], scale=[2], offset=[2], rate=float).
-
-    volts = raw * scale[ch] + offset[ch]
-    """
-    h = c_int()
-    dwf.FDwfDeviceOpen(c_int(-1), byref(h))
-    if h.value == 0:
-        raise RuntimeError("could not open the ADP2230")
-    try:
+class Scope:
+    def __init__(self, rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S):
+        self.h = c_int()
+        dwf.FDwfDeviceOpen(c_int(-1), byref(self.h))
+        if self.h.value == 0:
+            raise RuntimeError("could not open the ADP2230")
         bmin, bmax = c_int(), c_int()
-        dwf.FDwfAnalogInBufferSizeInfo(h, byref(bmin), byref(bmax))
-        n = min(int(rate * seconds), bmax.value)
-        dwf.FDwfAnalogInFrequencySet(h, c_double(rate))
-        dwf.FDwfAnalogInBufferSizeSet(h, c_int(n))
+        dwf.FDwfAnalogInBufferSizeInfo(self.h, byref(bmin), byref(bmax))
+        self.max_samples = bmax.value
+        self.vrange = vrange
         for ch in (0, 1):
-            dwf.FDwfAnalogInChannelEnableSet(h, c_int(ch), c_int(1))
-            dwf.FDwfAnalogInChannelRangeSet(h, c_int(ch), c_double(vrange))
-            dwf.FDwfAnalogInChannelOffsetSet(h, c_int(ch), c_double(0.0))
-        dwf.FDwfAnalogInTriggerSourceSet(h, c_byte(0))  # free-running
-        time.sleep(settle)  # input stage settles after a range change
+            dwf.FDwfAnalogInChannelEnableSet(self.h, c_int(ch), c_int(1))
+            dwf.FDwfAnalogInChannelRangeSet(self.h, c_int(ch), c_double(vrange))
+            dwf.FDwfAnalogInChannelOffsetSet(self.h, c_int(ch), c_double(0.0))
+        dwf.FDwfAnalogInTriggerSourceSet(self.h, c_byte(0))  # free-running
+        self.ready_at = time.time() + settle
+        self.set_timebase(rate, seconds)
+
+    def set_timebase(self, rate, seconds):
+        """Rate and length can change without re-settling the inputs."""
+        self.n = min(int(rate * seconds), self.max_samples)
+        dwf.FDwfAnalogInFrequencySet(self.h, c_double(rate))
+        dwf.FDwfAnalogInBufferSizeSet(self.h, c_int(self.n))
+
+    def capture(self):
+        """Returns dict(raw=int16[2, n], scale=[2], offset=[2], rate=float).
+
+        volts = raw * scale[ch] + offset[ch]
+        """
+        wait = self.ready_at - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        h, n = self.h, self.n
         dwf.FDwfAnalogInConfigure(h, c_int(1), c_int(1))
         st = c_byte()
         while True:
@@ -59,11 +77,26 @@ def capture(rate=50e6, seconds=0.25, vrange=5.0, settle=2.0):
             r = raw[ch, :m].astype(float)
             if np.ptp(r) > 0:
                 scale[ch], offset[ch] = np.polyfit(r, v, 1)
-            else:
-                scale[ch], offset[ch] = vrange / 65536, v.mean()
+            else:  # flat input: no slope to fit
+                scale[ch], offset[ch] = self.vrange / 65536, v.mean()
         return {"raw": raw, "scale": scale, "offset": offset, "rate": real.value}
-    finally:
-        dwf.FDwfDeviceClose(h)
+
+    def close(self):
+        if self.h.value:
+            dwf.FDwfDeviceClose(self.h)
+            self.h = c_int()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def capture(rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S):
+    """One-shot capture (opens, settles, captures, closes)."""
+    with Scope(rate, seconds, vrange, settle) as s:
+        return s.capture()
 
 
 def volts(cap, ch):
