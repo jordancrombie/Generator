@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 680" role="img" aria-label="ESP32 wiring: every coax run gets one 75 ohm termination, at its far end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .bg { fill: #ffffff; }
+    .ink { fill: #1f2328; }
+    .quiet { fill: #59636e; }
+    .edge { stroke: #8c959f; }
+    .edge-fill { fill: #8c959f; }
+    .wire { stroke: #1f2328; }
+    .gnd { stroke: #59636e; }
+    .accent { stroke: #0969da; }
+    .accent-fill { fill: #0969da; fill-opacity: 0.12; }
+    .good { stroke: #1a7f37; }
+    .good-fill { fill: #1a7f37; fill-opacity: 0.12; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .ink { fill: #e6edf3; }
+      .quiet { fill: #9198a1; }
+      .edge { stroke: #6e7681; }
+      .edge-fill { fill: #6e7681; }
+      .wire { stroke: #e6edf3; }
+      .gnd { stroke: #9198a1; }
+      .accent { stroke: #4493f8; }
+      .accent-fill { fill: #4493f8; fill-opacity: 0.18; }
+      .good { stroke: #3fb950; }
+      .good-fill { fill: #3fb950; fill-opacity: 0.18; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" class="edge-fill"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="760" height="680"/>
+  <text x="24" y="30" font-size="15" font-weight="600" class="ink">ESP32 wiring: every coax run gets one 75 Ω termination, at its far end</text>
+  <text x="24" y="50" font-size="11.5" class="quiet">Ground reaches every device through the coax shields; the ESP32 and ADP2230 also share ground over USB.</text>
+
+  <!-- ESP32 board -->
+  <rect x="24" y="76" width="176" height="176" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="112" y="100" text-anchor="middle" font-weight="600" class="ink">ESP32 DevKit</text>
+  <text x="112" y="118" text-anchor="middle" font-size="11.5" class="quiet">ESP32-D0WD (classic)</text>
+  <text x="190" y="150" text-anchor="end" class="ink">GPIO25 (DAC1)</text>
+  <text x="190" y="214" text-anchor="end" class="ink">GND</text>
+  <text x="112" y="240" text-anchor="middle" font-size="11.5" class="quiet">USB: power + serial</text>
+  <circle cx="200" cy="146" r="3.5" class="edge-fill"/>
+  <circle cx="200" cy="210" r="3.5" class="edge-fill"/>
+
+  <!-- series resistor -->
+  <path d="M200 146H222 l5 -7 l8 14 l8 -14 l8 14 l8 -14 l8 14 l5 -7 H300" fill="none" stroke-width="1.5" class="wire"/>
+  <text x="251" y="128" text-anchor="middle" font-weight="600" class="ink">75 Ω</text>
+  <text x="251" y="172" text-anchor="middle" font-size="11.5" class="quiet">series resistor</text>
+
+  <!-- ground to the jack shield -->
+  <path d="M200 210H290V178H300" fill="none" stroke-width="1.5" stroke-dasharray="5 3" class="gnd"/>
+
+  <!-- BNC jack -->
+  <rect x="300" y="122" width="104" height="64" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="352" y="144" text-anchor="middle" font-weight="600" class="ink">BNC jack</text>
+  <text x="352" y="162" text-anchor="middle" font-size="11.5" class="quiet">centre: signal</text>
+  <text x="352" y="178" text-anchor="middle" font-size="11.5" class="quiet">shield: GND</text>
+
+  <!-- coax runs -->
+  <g fill="none" stroke-width="1.25" class="edge">
+    <path d="M404 154H442" marker-end="url(#arrow)"/>
+    <path d="M516 154H554" marker-end="url(#arrow)"/>
+    <path d="M480 178V530" marker-end="url(#arrow)"/>
+    <path d="M646 186V236" marker-end="url(#arrow)"/>
+    <path d="M646 290V320" marker-end="url(#arrow)"/>
+    <path d="M646 374V404" marker-end="url(#arrow)"/>
+    <path d="M646 470V530" marker-end="url(#arrow)"/>
+    <path d="M112 252V532"/>
+    <path d="M224 560H400"/>
+  </g>
+  <text x="424" y="144" text-anchor="middle" font-size="11.5" class="quiet">coax</text>
+  <text x="636" y="216" text-anchor="end" font-size="11.5" class="quiet">run 2</text>
+  <text x="470" y="330" text-anchor="end" font-size="11.5" class="quiet">short coax (under 1 m)</text>
+  <text x="470" y="346" text-anchor="end" font-size="11.5" class="quiet">no terminator: CH2 only listens</text>
+  <text x="122" y="400" font-size="11.5" class="quiet">USB</text>
+  <text x="312" y="552" text-anchor="middle" font-size="11.5" class="quiet">USB</text>
+
+  <!-- tee at the generator -->
+  <rect x="444" y="130" width="72" height="48" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="480" y="158" text-anchor="middle" font-weight="600" class="ink">BNC tee</text>
+
+  <!-- TBC and the downstream chain -->
+  <rect x="556" y="122" width="180" height="64" rx="8" stroke-width="2" class="accent accent-fill"/>
+  <text x="646" y="148" text-anchor="middle" font-weight="600" class="ink">TBC under test</text>
+  <text x="646" y="168" text-anchor="middle" font-size="11.5" class="quiet">75 Ω input ends run 1</text>
+
+  <rect x="566" y="238" width="160" height="52" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="646" y="258" text-anchor="middle" font-weight="600" class="ink">Monitor</text>
+  <text x="646" y="276" text-anchor="middle" font-size="11.5" class="quiet">loop-through, 75 Ω off</text>
+
+  <rect x="566" y="322" width="160" height="52" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="646" y="342" text-anchor="middle" font-weight="600" class="ink">Vectorscope</text>
+  <text x="646" y="360" text-anchor="middle" font-size="11.5" class="quiet">loop-through, 75 Ω off</text>
+
+  <rect x="566" y="406" width="160" height="64" rx="8" stroke-width="2" class="good good-fill"/>
+  <text x="646" y="428" text-anchor="middle" font-weight="600" class="ink">BNC tee</text>
+  <text x="646" y="446" text-anchor="middle" font-size="11.5" class="quiet">+ 75 Ω terminator cap</text>
+  <text x="646" y="462" text-anchor="middle" font-size="11.5" class="quiet">ends run 2</text>
+
+  <!-- ADP2230 -->
+  <rect x="400" y="500" width="336" height="104" rx="8" fill="none" stroke-width="1.25" stroke-dasharray="4 4" class="edge"/>
+  <text x="563" y="520" text-anchor="middle" font-weight="600" class="ink">ADP2230</text>
+  <rect x="416" y="532" width="128" height="56" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="480" y="556" text-anchor="middle" font-weight="600" class="ink">CH2 reference</text>
+  <text x="480" y="574" text-anchor="middle" font-size="11.5" class="quiet">generator output</text>
+  <rect x="582" y="532" width="128" height="56" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="646" y="556" text-anchor="middle" font-weight="600" class="ink">CH1 result</text>
+  <text x="646" y="574" text-anchor="middle" font-size="11.5" class="quiet">after the TBC</text>
+
+  <!-- host -->
+  <rect x="24" y="532" width="200" height="56" rx="8" fill="none" stroke-width="1.25" class="edge"/>
+  <text x="124" y="556" text-anchor="middle" font-weight="600" class="ink">Mac</text>
+  <text x="124" y="574" text-anchor="middle" font-size="11.5" class="quiet">PlatformIO + WaveForms SDK</text>
+
+  <text x="24" y="636" font-size="11.5" class="quiet">Run 1: generator to TBC input, terminated inside the TBC. Run 2: TBC output, monitor, vectorscope, then the CH1 terminator.</text>
+  <text x="24" y="654" font-size="11.5" class="quiet">An open-ended run starves the ESP32's DAC, which can barely pull its output down: chroma collapses and the picture rolls.</text>
+</svg>
