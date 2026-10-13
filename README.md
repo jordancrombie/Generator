@@ -19,11 +19,12 @@ Measured hardware and toolchain facts (settling times, quirks, pitfalls) are in
 |---|---|
 | Colour bars, first light | **Done.** SMPTE and EIA bars, staircase, flat, crosshatch. Hue within 1.5° and luma within 0.5 IRE at the DAC |
 | Timing tests (H1–H5, F1) | **Built and verified** against the reference model. F1 not yet measured on the scope |
-| Structure tests (S3, S5, S6, S7) | **Built and verified**; observed through the TBC on CH1 |
+| Structure tests (S3–S9) | **Built and verified**; observed through the TBC on CH1. S4, S8 and S9 target frame synchronisers |
+| Device tagging and reports | **Done.** `--dut`/`--note` on every run; optional `--html` report |
 | Colour-under (VHS/Betamax) | **Default.** Direct colour (U-matic/1") available with `chroma follows` |
 | Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 |
 | CH2 reference and level calibration | **Waiting on hardware** (BNC tees and a 75 Ω terminator) |
-| Remaining tests | S1, S2, S4 (sync), C1–C4 (colour), F2, F3, L1–L4 (levels, noise, dropouts) |
+| Remaining tests | S1, S2 (sync), C1–C4 (colour), F2, F3, L1–L4 (levels, noise, dropouts); H6 velocity error (line TBCs, for the tape-deck phase); latency in frames (needs CH2) |
 | Grader | Not part of this repo. `tools/perturb_model.py` is its reference for what was sent |
 
 ## Wiring
@@ -81,19 +82,28 @@ blanking.
 
 ## Tests
 
-| ID | Test | Rungs (mild → severe) |
-|---|---|---|
-| V0 | clean baseline | 1 |
-| H1 | random line jitter, rms ns | 5, 10, 20, 50, 100, 200 |
-| H2 | sinusoidal jitter, peak ns @ Hz | 50@1 … 2000@30 |
-| H3 | timing step, µs, toggles every 0.5 s | 0.25, 0.5, 1, 2, 5 |
-| H4 | head-switch skew, µs (lines 520–256) | 0.5, 1, 2, 5, 10 |
-| H5 | displaced single line (100 and 362), samples | ±2, ±4, ±10, ±20 |
-| F1 | sample-clock offset, ppm | ±10, ±30, ±100, ±300, ±1000 |
-| S3 | missing H syncs from line 100, lines | 1, 2, 5, 10, 20 |
-| S5 | progressive 240p (two 262-line fields per frame) | 1 |
-| S6 | lines removed/repeated per field at lines 200 and 462 | −1, +1, −3, +3, −10, +10 |
-| S7 | dropped field: every N frames field 2 is missing | 60, 30, 15, 6, 2 |
+Each test is tagged with the TBC class it targets. Its manifest states the
+ideal output for a **line TBC** (corrects timing, passes structure through)
+and for a **frame TBC / synchroniser** (outputs standard fields whatever
+comes in). That way a line TBC isn't marked down for passing a dropped field
+through.
+
+| ID | Test | Aimed at | Rungs (mild → severe) |
+|---|---|---|---|
+| V0 | clean baseline | both | 1 |
+| H1 | random line jitter, rms ns | both | 5, 10, 20, 50, 100, 200 |
+| H2 | sinusoidal jitter, peak ns @ Hz | both | 50@1 … 2000@30 |
+| H3 | timing step, µs, toggles every 0.5 s | both | 0.25, 0.5, 1, 2, 5 |
+| H4 | head-switch skew, µs (lines 520–256) | both | 0.5, 1, 2, 5, 10 |
+| H5 | displaced single line (100 and 362), samples | both | ±2, ±4, ±10, ±20 |
+| F1 | sample-clock offset, ppm | both | ±10, ±30, ±100, ±300, ±1000 |
+| S3 | missing H syncs from line 100, lines | both | 1, 2, 5, 10, 20 |
+| S4 | malformed vertical interval, variant | frame | 1 EQ pulses → H sync · 2 unserrated V-sync · 3 both · 4/5 V-sync missing in field 1 every 30/6 frames · 6 V-sync missing in every field |
+| S5 | progressive 240p (two 262-line fields per frame) | frame | 1 |
+| S6 | lines removed/repeated per field at lines 200 and 462 | frame | −1, +1, −3, +3, −10, +10 |
+| S7 | dropped field: every N frames field 2 is missing | frame | 60, 30, 15, 6, 2 |
+| S8 | field-length wow: lines added/removed per field, peak @ Hz | frame | 1@0.5, 2@1, 5@1, 10@2, 20@2 |
+| S9 | search noise bar: a band of sync-less snow moving 23 lines a frame, lines | both | 2, 5, 10, 20, 40 |
 
 A dropped field leaves a lone half-line. It plays as 456 samples rather than
 455, because the DAC consumes samples in pairs (+35 ns at the drop).
@@ -111,7 +121,10 @@ sockets, so look it up:
 The host tools need `numpy` and `pyserial`.
 
 ```
+export TBC_DUT="AVT-8710"                         # name the device under test once per session
+export TBC_NOTE="composite in/out, controls at default"
 python3 tools/run_suite.py                      # smoke set: one rung of every test (~3 s each)
+python3 tools/run_suite.py --html               # ...plus an HTML report in reports/
 python3 tools/run_suite.py H1:all S7:4-5        # chosen tests and rungs on one scope session
 python3 tools/run_test.py H1 4                  # a single rung
 python3 tools/run_test.py H1 4 --keep           # ...and keep its capture for debugging
@@ -120,7 +133,13 @@ python3 tools/verify_timing.py                  # check the firmware against the
 python3 tools/check_lines.py                    # check colour bars as rendered
 ```
 
-Every run prints `observe_tbc`'s report on the TBC output. The capture is
+Every run prints `observe_tbc`'s report on the TBC output, records the
+device under test (`--dut`, or `$TBC_DUT`) and its settings (`--note`, or
+`$TBC_NOTE`) in the manifest, and stops with an error if the generator isn't
+advancing frames. `--html` (off by default) also writes a self-contained
+report to `reports/<time>_<dut>.html`. It contains a summary table and, for
+each run, the ideal output per TBC class, key figures, a frame-sequence strip
+and one captured line. `reports/` is not committed. The capture is
 then **deleted by default**. With `--keep` (on `run_test.py` or
 `run_suite.py`), the run stays in `runs/<timestamp>_<test>_r<rung>/` as
 `manifest.json` plus `capture.npz` (raw int16 per channel, volts = raw ×
@@ -160,6 +179,10 @@ measured yet.
 | S6 +10 lines per field | Repeats a frame |
 | S7 dropped fields | Re-shows earlier fields (…168 169 168 169…) |
 | H1 50 ns rms jitter | About 23 ns rms residual picture displacement (floor 0.7 ns) |
+| S4 unserrated V-sync, EQ pulses as H sync | Locks normally |
+| S4 V-sync missing in every field | Still outputs standard fields in order, but with no vertical reference the picture sits far lower: marker at line 201–209 after V-sync instead of 15, landing somewhere different each time it locks |
+| S8 field-length wow (±20 lines at 2 Hz) | Occasionally repeats a field to keep its output standard |
+| S9 noise bar (20 lines) | Every field passed in order |
 
 In every run the output stayed standard: 262.5 lines per field and 0.4–0.6 ns
 rms line jitter.
@@ -179,9 +202,10 @@ rms line jitter.
 | `tools/perturb_model.py` | reference model of perturbations, frame structure and marker |
 | `tools/run_suite.py`, `tools/run_test.py` | run many rungs on one scope session, or one rung |
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
-| `tools/observe_tbc.py` | TBC output report from a run |
+| `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data) |
+| `tools/html_report.py` | the optional HTML report |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
 | `tools/gen_cmd.py` | serial helpers (`BAUD`, `request`, `dump_line`) and a command-line sender |
 | `tools/dwf_list.py`, `tools/dwf_capture.py` | scope utilities |
-| `docs/bench-notes.md` | measured hardware, toolchain and signal facts |
+| `docs/bench-notes.md` | measured hardware, toolchain and signal facts, open issues |

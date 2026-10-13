@@ -22,7 +22,22 @@ TESTS = [("V0", 1, 1, "under", 0), ("H1", 4, 7, "under", 0), ("H1", 6, 3, "under
          ("H3", 3, 1, "under", 0), ("H4", 3, 1, "under", 0), ("H5", 1, 1, "under", 0), ("H5", 8, 1, "under", 0),
          ("H1", 6, 3, "follows", 0),
          ("S3", 3, 1, "under", 0), ("S5", 1, 1, "under", 0), ("S6", 1, 1, "under", 0), ("S6", 4, 1, "under", 1),
-         ("S7", 5, 1, "under", 1), ("S7", 5, 1, "under", 0)]
+         ("S7", 5, 1, "under", 1), ("S7", 5, 1, "under", 0),
+         ("S4", 1, 1, "under", 0), ("S4", 2, 1, "under", 0), ("S4", 3, 1, "under", 0), ("S4", 5, 1, "under", 0),
+         ("S4", 5, 1, "under", 1), ("S4", 6, 1, "under", 0),
+         ("S8", 5, 1, "under", 0), ("S8", 5, 1, "under", 1), ("S9", 5, 1, "under", 0)]
+
+# S4: expected sync pulses (start us, width us) on a vertical-interval line, by variant,
+# when the frame alters it; "low" = low for the whole line (unserrated, continuing).
+VBI_EXPECT = {
+    (1, 2): [(0, 4.7)],                      # line 2: EQ pair -> one plain H sync
+    (2, 5): "low",                           # line 5: unserrated broad pulses, joined
+    (3, 2): [(0, 4.7)], (3, 5): "low",
+    (4, 5): [(0, 2.3), (31.8, 2.3)],         # line 5: V-sync missing -> EQ pulses
+    (5, 5): [(0, 2.3), (31.8, 2.3)],
+    (6, 5): [(0, 2.3), (31.8, 2.3)],
+}
+NORMAL_VS = [(0, 27.1), (31.8, 27.1)]
 HALF_BASE = 600
 
 
@@ -44,6 +59,14 @@ def sync_pos(codes, blank, tip):
     return k - 1 + (codes[k - 1] - mid) / (codes[k - 1] - codes[k])
 
 
+def pulses_in(codes, mid):
+    """(start us, width us) of runs below `mid`, relative to the line's sync origin."""
+    b = np.concatenate([[False], codes < mid, [False]])
+    d = np.diff(b.astype(int))
+    starts, ends = np.where(d == 1)[0], np.where(d == -1)[0]
+    return [((a - ORIGIN) / US, (e - a) / US) for a, e in zip(starts, ends) if (e - a) / US > 1.0]
+
+
 def burst_phase(codes, sync, start_mod4, e):
     """Burst phase (deg) against the continuous reference sin((pi/2)(start + e + k)),
     where start is the nominal sample count before this line (mod 4)."""
@@ -56,7 +79,10 @@ def burst_phase(codes, sync, start_mod4, e):
 def main():
     g = Gen()
     ok_all = True
+    only = [a.upper() for a in sys.argv[1:]]  # e.g. verify_timing.py S8 S9
     for tid, rung, seed, mode, half in TESTS:
+        if only and tid not in only:
+            continue
         assert g.cmd(f"chroma {mode}").strip().endswith("ok"), mode
         assert g.cmd(f"test {tid} {rung} {seed}").strip().endswith("ok"), tid
         time.sleep(0.2)  # let a few frames go by after the rebuild
@@ -87,13 +113,17 @@ def main():
         cum = [pm.frame_start_mod4(test, frame)]
         for _, f in slots:
             cum.append((cum[-1] + pm.nominal_samples(f)) % 4)
-        pos_err, ph_err, nosync_ok = [], [], True
+        pos_err, ph_err, nosync_ok, checked = [], [], True, []
         for i in (21, 50, 99, 100, 101, 255, 256, 300, 400):
             if i >= len(slots):
                 continue
+            if slots[i][1] & pm.SLOT_NOISE:  # snow: no sync or burst to check
+                continue
+            if pm.line_halves(slots[i][0])[0] not in ("BLANK", "ACTIVE"):  # VBI line: no H sync or burst
+                continue
             c = g.dump(HALF_BASE * half + i)
             e, v = plan[i]
-            if slots[i][1] & pm.SLOT_NOSYNC:  # no sync pulse: nothing below blanking in the first 10 us
+            if slots[i][1] & pm.SLOT_ALT and tid == "S3":  # no sync pulse: nothing below blanking in the first 10 us
                 nosync_ok &= c[:int(10 * US)].min() > tip_code + 0.25 * (blank_code - tip_code)  # burst dips to -20 IRE
                 sp = ORIGIN + v * 2.0 / nsub
             else:
@@ -101,7 +131,41 @@ def main():
                 pos_err.append(sp - (ORIGIN + v * 2.0 / nsub))
             exp_ph = 180.0 if mode == "under" else (180.0 - 90.0 * (e + v * 2.0 / nsub)) % 360
             ph_err.append((burst_phase(c, sp, cum[i], e) - exp_ph + 180) % 360 - 180)
+            checked.append(i)
         pos_err, ph_err = np.array(pos_err), np.array(ph_err)
+
+        # S4: the vertical-interval sync shapes; S9: snow lines carry the snow
+        # rendering the model names, with no sync.
+        struct_ok, struct_note = True, ""
+        if tid == "S4":
+            for L in (2, 5):
+                exp = VBI_EXPECT.get((rung, L))
+                if exp is None:
+                    continue
+                c = g.dump(HALF_BASE * half + L - 1)
+                altered = bool(slots[L - 1][1] & pm.SLOT_ALT)
+                if not altered:
+                    exp = NORMAL_VS if L == 5 else [(0, 2.3), (31.8, 2.3)]
+                mid = (blank_code + tip_code) / 2
+                if exp == "low":
+                    got = f"{np.mean(c < mid):.0%} low"
+                    good_l = np.mean(c < mid) > 0.97
+                else:
+                    pl = pulses_in(c, mid)
+                    got = [(round(a, 1), round(w, 1)) for a, w in pl]
+                    good_l = len(pl) == len(exp) and all(abs(a - ea) < 0.3 and abs(w - ew) < 0.3
+                                                         for (a, w), (ea, ew) in zip(pl, exp))
+                struct_ok &= good_l
+                struct_note += f" line {L}{' (altered)' if altered else ''}: {got};"
+        if tid == "S9":
+            bar = [i for i, (_, f) in enumerate(slots) if f & pm.SLOT_NOISE]
+            i = bar[0]
+            c = g.dump(HALF_BASE * half + i)
+            want = np.array([pm.noise_ire(pm.noise_variant(frame, i), k) for k in range(len(c))])
+            got_ire = (c - tip_code) * 140 / (lv["white_code"] - lv["sync_code"]) - 40
+            err = np.max(np.abs(got_ire - want))
+            struct_ok &= err < 1.5  # one DAC code is ~1.9 IRE; rounding lands within half of that
+            struct_note += f" snow line {slots[i][0]} vs model: max err {err:.2f} IRE, bar {len(bar)} lines;"
 
         # 4. frame markers (every slot showing a marker line)
         marks = []
@@ -118,12 +182,16 @@ def main():
 
         good = tgt_err < 0.02 * max(1.0, test["params"].get("peak_ns", 1)) and ev_bad == 0 and len_bad == 0 \
             and (len(pos_err) == 0 or np.max(np.abs(pos_err)) < 0.15) and np.max(np.abs(ph_err)) < 4 and nosync_ok \
+            and struct_ok \
             and order_ok and marks and all(m == (int(man["test"]["code"]), rung, frame & 0xFFFF) for m in marks)
         ok_all &= good
+        if not good and len(ph_err) and np.max(np.abs(ph_err)) >= 4:
+            print("   burst phase error by slot:", {i: round(float(p_), 1) for i, p_ in zip(checked, ph_err)})
         print(f"{'PASS' if good else 'FAIL'} {tid} r{rung} {mode} (frame {frame}, {len(lens)} lines, nsub {nsub}): "
               f"target err {tgt_err:.4f} ns, e/v bad {ev_bad}, length bad {len_bad}, "
               f"sync pos err {np.max(np.abs(pos_err)) if len(pos_err) else 0:.3f} smp, "
-              f"burst phase err {np.max(np.abs(ph_err)):.1f} deg, no-sync ok {nosync_ok}, halves {fr[0]}/{fr[1]}, markers {marks}")
+              f"burst phase err {np.max(np.abs(ph_err)):.1f} deg, no-sync ok {nosync_ok}, halves {fr[0]}/{fr[1]}, markers {marks}"
+              f"{' |' + struct_note if struct_note else ''}")
     g.cmd("chroma under")
     g.cmd("test V0")
     print("ALL PASS" if ok_all else "SOME FAILED")

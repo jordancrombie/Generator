@@ -21,13 +21,13 @@ static void print_info() {
                   "\"clock_ppm\":%.2f,\"sample_hz\":%.3f,\"fsc_hz\":%.3f,\"line_hz\":%.4f,"
                   "\"test\":\"%s\",\"rung\":%d,\"seed\":%u,\"frames\":%u,"
                   "\"unique_lines\":%d,\"subsample_steps\":%d,\"ext_samples\":%d,\"max_write_us\":%u,"
-                  "\"line_origin_samples\":%.1f,\"chroma\":\"%s\",\"free_heap\":%u}\n",
+                  "\"line_origin_samples\":%.1f,\"chroma\":\"%s\",\"dma_restarts\":%u,\"dma_restart_last\":\"%s\",\"free_heap\":%u}\n",
                   PATTERNS[gen::pattern()].name, gen::pattern(), lv.sync_code, lv.white_code, g_flat_ire,
                   gen::clock_ppm(), gen::actual_sample_hz(), gen::actual_sample_hz() / 4.0,
                   gen::actual_sample_hz() / ntsc::SAMPLES_PER_LINE, gen::test().def->id, gen::test().rung,
                   (unsigned)gen::test().seed, (unsigned)gen::frames(), gen::unique_lines(),
                   gen::subsample_steps(), gen::ext_samples(), (unsigned)gen::max_write_us(), ntsc::LINE_ORIGIN,
-                  gen::chroma_follows() ? "follows_timing" : "colour_under",
+                  gen::chroma_follows() ? "follows_timing" : "colour_under", (unsigned)gen::dma_restarts(), gen::dma_restart_note(),
                   (unsigned)ESP.getFreeHeap());
 }
 
@@ -101,7 +101,7 @@ static void handle(String line) {
     } else if (cmd == "tests") {
         for (int i = 0; i < perturb::NUM_DEFS; i++) {
             const perturb::Def &d = perturb::DEFS[i];
-            Serial.printf("  %-3s %-24s %s:", d.id, d.name, *d.p1_name ? d.p1_name : "-");
+            Serial.printf("  %-3s %-28s [%s] %s:", d.id, d.name, d.targets, *d.p1_name ? d.p1_name : "-");
             for (int r = 0; r < d.rungs; r++) {
                 if (*d.p2_name) Serial.printf(" %g@%g", d.p1[r], d.p2[r]);
                 else Serial.printf(" %g", d.p1[r]);

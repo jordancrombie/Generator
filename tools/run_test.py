@@ -1,6 +1,10 @@
 """Run one test rung on the generator, capture CH1/CH2 and report on it.
 
-usage: run_test.py TEST [RUNG] [--keep] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+usage: run_test.py TEST [RUNG] [--dut NAME] [--note TEXT] [--keep] [--html [PATH]]
+                   [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+
+--dut names the device under test (default $TBC_DUT) and --note records its
+settings (default $TBC_NOTE); both go into the manifest and reports.
 
 Each run is saved to DIR/<timestamp>_<test>_r<rung>/ containing
   manifest.json  the generator's manifest plus capture metadata
@@ -19,31 +23,73 @@ import numpy as np
 
 import dwf_scope
 from gen_cmd import open_gen, request
+import html_report
 from observe_tbc import report
 
 RUNS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runs")
 
 
-def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS):
+def add_common_args(ap):
+    """Options shared by run_test.py and run_suite.py."""
+    ap.add_argument("--dut", default=os.environ.get("TBC_DUT", ""), help="device under test (default $TBC_DUT)")
+    ap.add_argument("--note", default=os.environ.get("TBC_NOTE", ""), help="DUT settings etc. (default $TBC_NOTE)")
+    ap.add_argument("--keep", action="store_true", help="keep the capture and manifest instead of deleting them")
+    ap.add_argument("--html", nargs="?", const="auto", help="also write an HTML report (default reports/<time>_<dut>.html)")
+    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--rate", type=float, default=50e6)
+    ap.add_argument("--seconds", type=float, default=0.5)
+    ap.add_argument("--settle", type=float, default=2.0, help="seconds for the TBC to lock before capturing")
+    ap.add_argument("--out", default=RUNS)
+
+
+def dut_of(a):
+    if not a.dut:
+        print("note: no --dut given (set TBC_DUT to name the device under test once per session)")
+    return {"name": a.dut, "notes": a.note}
+
+
+def ask_json(s, cmd, until, tries=3):
+    """Send a command whose reply is one JSON line; retry if the reply arrives garbled."""
+    for attempt in range(tries):
+        reply = request(s, cmd, until=until)
+        line = next((l for l in reply.splitlines() if l.startswith("{")), "")
+        try:
+            return json.loads(line)
+        except ValueError:
+            if attempt == tries - 1:
+                raise RuntimeError(f"no valid JSON from '{cmd}' after {tries} tries: {reply[:200]!r}")
+
+
+def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None):
     """Start a test rung, wait `settle` s for the TBC to lock, capture, save. Returns the run dir."""
     reply = request(s, f"test {test} {rung} {seed}", until="\n", timeout=5)
     if "ok" not in reply:
         raise RuntimeError(f"generator refused 'test {test} {rung}': {reply.strip()}")
     started = time.time()
-    manifest = json.loads(next(l for l in request(s, "manifest", until="}}\n").splitlines() if l.startswith("{")))
+    manifest = ask_json(s, "manifest", "}}\n")
     remaining = settle - (time.time() - started)
     if remaining > 0:
         time.sleep(remaining)
-    info = json.loads(next(l for l in request(s, "info", until="}\n").splitlines() if l.startswith("{")))
+    info = ask_json(s, "info", "}\n")
+    if info["frames"] < 10:  # ~33 ms a frame: after the settle it should be well past this
+        raise RuntimeError(f"generator is not advancing frames (frames={info['frames']} after {settle} s); "
+                           "check `diag`, or reset the ESP32")
 
     t0 = time.time()
     cap = scope.capture()
+    after = ask_json(s, "info", "}\n")
+    restarted = after.get("dma_restarts", 0) - info.get("dma_restarts", 0)
+    if restarted:
+        print(f"  WARNING: the generator's DMA was restarted {restarted}x during this capture "
+              f"({after.get('dma_restart_last', '')}); part of it may be frozen output")
     manifest["capture"] = {
         "rate_hz": cap["rate"], "samples": int(cap["raw"].shape[1]),
         "channels": {"ch1": "result (end of chain, after TBC)", "ch2": "reference (generator output)"},
         "volts": "raw * scale + offset", "started_unix": t0, "frames_at_start": info["frames"],
+        "dma_restarts_during": restarted,
     }
     manifest["generator_state"] = info
+    manifest["dut"] = dut or {"name": "", "notes": ""}
 
     run = os.path.join(out, time.strftime("%Y%m%d-%H%M%S") + f"_{test}_r{rung}")
     os.makedirs(run, exist_ok=True)
@@ -55,37 +101,43 @@ def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS):
 
 
 def finish(run, keep=False):
-    """Print the run's report, then delete it unless `keep` (or the report failed)."""
+    """Print the run's report, then delete it unless `keep` (or the report failed).
+
+    Returns the analysis (for HTML reports), or None if it failed.
+    """
     try:
-        report(run)
+        result = report(run)
     except Exception as e:  # keep the evidence when something goes wrong
         print(f"  report failed ({type(e).__name__}: {e}); kept {run}")
-        return
+        return None
     if keep:
         print(f"  kept {run}")
     else:
         shutil.rmtree(run)
+    return result
+
+
+def write_html(results, dest):
+    results = [r for r in results if r]
+    if dest and results:
+        print(f"HTML report: {html_report.write(results, None if dest == 'auto' else dest)}")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("test")
     ap.add_argument("rung", nargs="?", type=int, default=1)
-    ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--rate", type=float, default=50e6)
-    ap.add_argument("--seconds", type=float, default=0.5)
-    ap.add_argument("--settle", type=float, default=2.0, help="seconds for the TBC to lock before capturing")
-    ap.add_argument("--out", default=RUNS)
-    ap.add_argument("--keep", action="store_true", help="keep the capture and manifest instead of deleting them")
+    add_common_args(ap)
     a = ap.parse_args()
+    dut = dut_of(a)
 
     with dwf_scope.Scope(a.rate, a.seconds) as scope:  # starts settling while the test starts
         s = open_gen()
-        run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out)
+        run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out, dut)
     for ch in (0, 1):
         v = dwf_scope.volts(cap, ch)
         print(f"ch{ch + 1}: {v.min():.3f} .. {v.max():.3f} V")
-    finish(run, a.keep)
+    write_html([finish(run, a.keep)], a.html)
 
 
 if __name__ == "__main__":

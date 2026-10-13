@@ -2,30 +2,53 @@
 
 #include <math.h>
 #include <string.h>
+#include "line_render.h"
 #include "ntsc_timing.h"
 
 using namespace ntsc;
 
 namespace perturb {
 
+// Ideal-output wording shared by several tests.
+#define BOTH "line,frame"
+#define FRAME "frame"
+#define TIMING_FIXED "timing corrected; vertical edges straight, picture steady"
+#define STANDARD_FIELDS "standard 262.5-line fields; drops/repeats allowed, no roll or tear"
+
 const Def DEFS[] = {
-    {"V0", 0x00, "clean baseline", NONE, "", "", 1, {0}, {0}},
+    {"V0", 0x00, "clean baseline", NONE, "", "", 1, {0}, {0}, BOTH,
+     "identical to the input", "identical to the input"},
     {"H1", 0x11, "random line jitter", JITTER_RANDOM, "rms_ns", "", 6,
-     {5, 10, 20, 50, 100, 200}, {0}},
+     {5, 10, 20, 50, 100, 200}, {0}, BOTH, TIMING_FIXED, TIMING_FIXED},
     {"H2", 0x12, "sinusoidal jitter", JITTER_SINE, "peak_ns", "hz", 6,
-     {50, 100, 200, 500, 1000, 2000}, {1, 3, 5, 10, 20, 30}},
+     {50, 100, 200, 500, 1000, 2000}, {1, 3, 5, 10, 20, 30}, BOTH, TIMING_FIXED, TIMING_FIXED},
     {"H3", 0x13, "timing step", STEP_SQUARE, "step_us", "", 5,
-     {0.25f, 0.5f, 1, 2, 5}, {0}},
+     {0.25f, 0.5f, 1, 2, 5}, {0}, BOTH, TIMING_FIXED " within a few lines of each step",
+     TIMING_FIXED " within a few lines of each step"},
     {"H4", 0x14, "head-switch skew", HEAD_SWITCH, "skew_us", "", 5,
-     {0.5f, 1, 2, 5, 10}, {0}},
+     {0.5f, 1, 2, 5, 10}, {0}, BOTH, TIMING_FIXED "; no bend at the head switch",
+     TIMING_FIXED "; no bend at the head switch"},
     {"H5", 0x15, "displaced single line", DISPLACED_LINE, "samples", "", 8,
-     {2, -2, 4, -4, 10, -10, 20, -20}, {0}},
+     {2, -2, 4, -4, 10, -10, 20, -20}, {0}, BOTH, TIMING_FIXED, TIMING_FIXED},
     {"F1", 0x21, "clock offset", FREQ_OFFSET, "ppm", "", 10,
-     {10, -10, 30, -30, 100, -100, 300, -300, 1000, -1000}, {0}},
-    {"S3", 0x33, "missing H syncs", MISSING_SYNC, "lines", "", 5, {1, 2, 5, 10, 20}, {0}},
-    {"S5", 0x35, "progressive 240p", PROGRESSIVE, "", "", 1, {0}, {0}},
-    {"S6", 0x36, "line count per field", LINE_COUNT, "delta_lines", "", 6, {-1, 1, -3, 3, -10, 10}, {0}},
-    {"S7", 0x37, "dropped field", FIELD_DROP, "every_frames", "", 5, {60, 30, 15, 6, 2}, {0}},
+     {10, -10, 30, -30, 100, -100, 300, -300, 1000, -1000}, {0}, BOTH,
+     "locks and follows the input rate; picture steady",
+     "locks; output at its own (or the reference) rate, dropping/repeating frames as needed"},
+    {"S3", 0x33, "missing H syncs", MISSING_SYNC, "lines", "", 5, {1, 2, 5, 10, 20}, {0}, BOTH,
+     "flywheels through the missing syncs; no tear", "flywheels through the missing syncs; no tear"},
+    {"S4", 0x34, "malformed vertical interval", BAD_VBI, "variant", "", 6, {1, 2, 3, 4, 5, 6}, {0}, FRAME,
+     "passes the vertical interval as received", "stable vertical lock; standard vertical interval out"},
+    {"S5", 0x35, "progressive 240p", PROGRESSIVE, "", "", 1, {0}, {0}, FRAME,
+     "passes 240p unchanged", "stable output: 240p passed or converted to standard fields"},
+    {"S6", 0x36, "line count per field", LINE_COUNT, "delta_lines", "", 6, {-1, 1, -3, 3, -10, 10}, {0}, FRAME,
+     "passes the line count unchanged", STANDARD_FIELDS},
+    {"S7", 0x37, "dropped field", FIELD_DROP, "every_frames", "", 5, {60, 30, 15, 6, 2}, {0}, FRAME,
+     "passes the dropped field unchanged", STANDARD_FIELDS},
+    {"S8", 0x38, "field-length wow", FIELD_WOW, "peak_lines", "hz", 5, {1, 2, 5, 10, 20}, {0.5f, 1, 1, 2, 2}, FRAME,
+     "passes the varying field length unchanged", STANDARD_FIELDS},
+    {"S9", 0x39, "search noise bar", NOISE_BAR, "lines", "", 5, {2, 5, 10, 20, 40}, {0}, BOTH,
+     "flywheels through the bar; the rest of the picture straight",
+     "stable lock; bar passed or concealed; no roll"},
 };
 const int NUM_DEFS = sizeof(DEFS) / sizeof(DEFS[0]);
 
@@ -113,8 +136,29 @@ uint32_t frame_start_mod4(const Test &t, uint32_t frame) {
     }
 }
 
-bool needs_nosync(const Test &t, int line) {
-    return t.def->kind == MISSING_SYNC && line >= 100 && line < 100 + (int)t.p1;
+uint8_t alt_mods(const Test &t, int line) {
+    using namespace render;
+    if (t.def->kind == MISSING_SYNC) return (line >= 100 && line < 100 + (int)t.p1) ? MOD_NO_HSYNC : 0;
+    if (t.def->kind != BAD_VBI) return 0;
+    LineSpec ls = line_spec(line);
+    bool eq = ls.a == H_EQ || ls.b == H_EQ, vs = ls.a == H_VS || ls.b == H_VS;
+    uint8_t m = 0;
+    switch ((int)t.p1) {
+        case 1: if (eq) m = MOD_EQ_AS_HSYNC; break;
+        case 2: if (vs) m = MOD_VS_UNSERRATED; break;
+        case 3: m = (eq ? MOD_EQ_AS_HSYNC : 0) | (vs ? MOD_VS_UNSERRATED : 0); break;
+        case 4:
+        case 5: if (vs && line <= 9) m = MOD_VS_AS_EQ; break;  // field 1 only
+        case 6: if (vs) m = MOD_VS_AS_EQ; break;
+    }
+    return m;
+}
+
+// Lines added (>0) or removed (<0) per field by S8 in this frame.
+static int wow_lines(const Test &t, uint32_t frame) {
+    const double frame_hz = FH_HZ / LINES_PER_FRAME;
+    double d = t.p1 * sin(2.0 * M_PI * t.p2 * frame / frame_hz);  // once per frame: double is fine
+    return (int)lround(d);
 }
 
 int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
@@ -135,8 +179,9 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             }
             break;
         }
-        case LINE_COUNT: {  // lines removed or repeated at line 200 (F1) and 462 (F2)
-            int d = (int)t.p1;
+        case LINE_COUNT:    // lines removed or repeated at line 200 (F1) and 462 (F2)
+        case FIELD_WOW: {
+            int d = t.def->kind == LINE_COUNT ? (int)t.p1 : wow_lines(t, frame);
             for (int L = 1; L <= LINES_PER_FRAME; L++) {
                 if (d < 0 && ((L >= 200 && L < 200 - d) || (L >= 462 && L < 462 - d))) continue;
                 add(L, 0);
@@ -145,8 +190,23 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             }
             break;
         }
+        case NOISE_BAR: {  // a band moving down 23 lines a frame through lines 30..229 (+263)
+            int top = 30 + (int)((frame * 23) % 200), h = (int)t.p1;
+            for (int L = 1; L <= LINES_PER_FRAME; L++) {
+                bool bar = (L >= top && L < top + h) || (L >= top + 263 && L < top + 263 + h);
+                add(L, bar ? SLOT_NOISE : 0);
+            }
+            break;
+        }
+        case BAD_VBI: {
+            int v = (int)t.p1;
+            // Variants 4 and 5 alter only some frames; the rest alter every frame.
+            bool active = v == 4 ? frame % 30 == 0 : v == 5 ? frame % 6 == 0 : true;
+            for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, active && alt_mods(t, L) ? SLOT_ALT : 0);
+            break;
+        }
         default:
-            for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, needs_nosync(t, L) ? SLOT_NOSYNC : 0);
+            for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, alt_mods(t, L) ? SLOT_ALT : 0);
     }
     return n;
 }

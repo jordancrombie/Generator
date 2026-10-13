@@ -91,6 +91,16 @@ void on_eof(void (*cb)(uint32_t)) {
     I2S0.int_ena.out_eof = 1;
 }
 
+void restart(lldesc_t *ring) {
+    I2S0.conf.tx_start = 0;
+    I2S0.out_link.stop = 1;
+    I2S0.conf.tx_fifo_reset = 1; I2S0.conf.tx_fifo_reset = 0;
+    I2S0.lc_conf.out_rst = 1;    I2S0.lc_conf.out_rst = 0;
+    I2S0.out_link.addr = (uint32_t)ring;
+    I2S0.out_link.start = 1;
+    I2S0.conf.tx_start = 1;
+}
+
 uint32_t current_descriptor() { return I2S0.out_link_dscr; }
 
 void force_dc(int code) {
