@@ -15,7 +15,6 @@ constexpr double US              = SAMPLE_HZ / 1e6;   // samples per microsecond
 constexpr int    SAMPLES_PER_LINE = 910;              // 227.5 subcarrier cycles
 constexpr int    HALF_LINE        = SAMPLES_PER_LINE / 2;
 constexpr int    LINES_PER_FRAME  = 525;
-constexpr int    CHAIN_LINES      = 2 * LINES_PER_FRAME; // 4-field colour sequence
 
 // Horizontal timing (SMPTE 170M nominal values)
 constexpr double HSYNC_WIDTH     = 4.7  * US;
@@ -44,5 +43,13 @@ constexpr double BURST_AMPL = 20.0;  // 40 IRE p-p
 constexpr double RGB_SCALE  = IRE_WHITE - IRE_SETUP;  // 92.5 IRE per unit Y
 
 constexpr int ACTIVE_ROWS = 486;  // D1 numbering: F1 lines 21-263, F2 283-525
+
+// Line buffers place the sync 50% point LINE_ORIGIN samples in, so each
+// line starts at blanking and can be lengthened by padding blank at its end.
+constexpr double LINE_ORIGIN = 4.0;
+constexpr int    MAX_EXT     = 200;      // max samples a line may be lengthened
+constexpr int    MIN_LEN     = 600;      // shortest line the ring will play
+constexpr double SAMPLE_NS   = 1e9 / SAMPLE_HZ;
+constexpr double FH_HZ       = SAMPLE_HZ / SAMPLES_PER_LINE;  // 15734.2657
 
 }  // namespace ntsc

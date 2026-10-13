@@ -10,6 +10,10 @@ void start(lldesc_t *ring);
 // Set the APLL so the DAC sample rate is `sample_hz`. Returns actual rate.
 double set_sample_rate(double sample_hz);
 
+// Call `cb(descriptor_address)` from the I2S interrupt each time a
+// descriptor with eof = 1 finishes playing.
+void on_eof(void (*cb)(uint32_t desc_addr));
+
 // Diagnostics: current DMA descriptor address; force a constant DAC code
 // (code < 0 returns the DAC to the DMA stream).
 uint32_t current_descriptor();

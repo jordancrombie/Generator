@@ -4,9 +4,12 @@
 #include "driver/rtc_io.h"
 #include "esp_private/periph_ctrl.h"
 #include "hal/dac_ll.h"
+#include "soc/i2s_reg.h"
 #include "soc/i2s_struct.h"
 #include "soc/rtc.h"
 #include "clk_ctrl_os.h"
+#include "esp_attr.h"
+#include "esp_intr_alloc.h"
 
 namespace i2s_dac {
 
@@ -70,6 +73,22 @@ void start(lldesc_t *ring) {
     I2S0.out_link.addr = (uint32_t)ring;
     I2S0.out_link.start = 1;
     I2S0.conf.tx_start = 1;
+}
+
+static void (*s_eof_cb)(uint32_t);
+static intr_handle_t s_intr;
+
+static void IRAM_ATTR isr(void *) {
+    uint32_t st = I2S0.int_st.val;
+    I2S0.int_clr.val = st;
+    if ((st & I2S_OUT_EOF_INT_ST_M) && s_eof_cb) s_eof_cb(I2S0.out_eof_des_addr);
+}
+
+void on_eof(void (*cb)(uint32_t)) {
+    s_eof_cb = cb;
+    if (!s_intr) esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_LEVEL1, isr, nullptr, &s_intr);
+    I2S0.int_clr.val = 0xFFFFFFFF;
+    I2S0.int_ena.out_eof = 1;
 }
 
 uint32_t current_descriptor() { return I2S0.out_link_dscr; }
