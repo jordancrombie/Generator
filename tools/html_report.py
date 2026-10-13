@@ -57,6 +57,44 @@ footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
 """
 
 KIND_FILL = {"ok": "var(--cell)", "single": "var(--info)", "repeat": "var(--warn)", "back": "var(--warn)", "skip": "var(--bad)"}
+FIELD_FILL = {"ours": "var(--cell)", "unmarked": "var(--cell)", "blank": "#57606a", "garbled": "var(--bad)",
+              "fallback": "#8250df", "blend": "var(--warn)"}
+
+
+def field_strip(log, cols=36):
+    """SVG of every output field: whose picture it carried, its frame, ghosting, field pairing."""
+    if not log:
+        return ""
+    cw, ch, gap = 26, 22, 3
+    rows = (len(log) + cols - 1) // cols
+    w, h = cols * (cw + gap), rows * (ch + gap)
+    out = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="What each output field carried">']
+    prev = None
+    for i, f in enumerate(log):
+        x, y = (i % cols) * (cw + gap), (i // cols) * (ch + gap)
+        fill = FIELD_FILL.get(f["class"], "var(--bad)")
+        if f["class"] == "ours" and f["ghost"]:
+            fill = "var(--warn)"
+        elif f["class"] == "ours" and prev is not None and f["frame"] < prev:
+            fill = "var(--warn)"           # went back to an older frame
+        stroke = ' style="stroke:var(--fg);stroke-width:1.5"' if not f["standard"] else ""
+        label = f["frame"] % 1000 if f["frame"] is not None else {"blank": "—", "garbled": "×", "fallback": "B",
+                                                                    "unmarked": "·", "blend": "≈"}.get(f["class"], "?")
+        txt = "var(--fg)" if fill == "var(--cell)" else "#ffffff"
+        out.append(f'<rect x="{x}" y="{y}" width="{cw}" height="{ch}" rx="3" style="fill:{fill}"{stroke}>'
+                   f'<title>field {i + 1} (parity {f["parity"]}, {f["lines"]} lines): {f["class"]}'
+                   f'{", frame " + str(f["frame"]) if f["frame"] is not None else ""}{", ghosted" if f["ghost"] else ""}</title></rect>')
+        out.append(f'<text x="{x + cw / 2}" y="{y + 15}" text-anchor="middle" style="fill:{txt};font-size:9.5px">{label}</text>')
+        if f["class"] == "ours":
+            prev = f["frame"]
+    out.append("</svg>")
+    legend = ('<div class="legend">'
+              '<span><i class="sw" style="background:var(--cell)"></i>our picture (frame no.)</span>'
+              '<span><i class="sw" style="background:var(--warn)"></i>ghosted / went back</span>'
+              '<span><i class="sw" style="background:#57606a"></i>blank</span>'
+              '<span><i class="sw" style="background:var(--bad)"></i>garbled</span>'
+              '<span><i class="sw" style="background:#8250df"></i>TBC\'s own pattern (B)</span></div>')
+    return "".join(out) + legend
 
 
 def esc(s):
@@ -199,6 +237,33 @@ def picture_cells(r):
             f'<td class="num">{pc["gray_ire"]:.1f} IRE</td>')
 
 
+def fault_html(r):
+    """Lost-field and fault-hunt findings for one run."""
+    parts = []
+    L = r.get("loss")
+    if L:
+        verdict = ("no gap captured" if not L["gap_captured"] else
+                   ("clean" if L["clean"] else "handled" if L["handled"] else "NOT handled") + f" — {L['how']}")
+        cls = "b-ok" if L.get("clean") else "b-warn" if L.get("handled") else "b-bad"
+        parts.append(f'<p><span class="badge {cls}">{esc(L["fields_lost"])} lost field(s): {esc(verdict)}</span> '
+                     f'blank {L["blank_fields"]} · garbled {L["garbled_fields"]} · own pattern {L["fallback_fields"]} · '
+                     f'non-standard {L["nonstandard_fields"]}</p>')
+    H = r.get("hunt")
+    if H:
+        rows = "".join(
+            f'<tr><td>{w}</td><td class="num">{d["fields"]}</td><td class="num">{d["not_ours"]}</td>'
+            f'<td class="num">{d["ghost"]}</td><td class="num">{d["mismatch"]}</td><td class="num">{d["back"]}</td>'
+            f'<td class="num">{d["repeat"]}</td></tr>'
+            for w in ("before", "stress", "settling", "after") for d in [H["windows"].get(w)] if d)
+        state = ("clean after stress" if H["after_clean"] else "NOT clean after stress"
+                 if H["after_clean"] is False else "recovery not captured")
+        cls = "b-ok" if H["after_clean"] else "b-bad"
+        parts.append(f'<p><span class="badge {cls}">{esc(state)}</span></p><div class="scroll"><table>'
+                     f'<thead><tr><th>Window</th><th>Fields</th><th>Not ours</th><th>Ghosted</th><th>Stuck/torn</th>'
+                     f'<th>Back</th><th>Repeated</th></tr></thead><tbody>{rows}</tbody></table></div>')
+    return "".join(parts)
+
+
 def tile(k, v, u=""):
     return f'<div class="tile"><div class="k">{esc(k)}</div><div class="v">{esc(v)} <span class="u">{esc(u)}</span></div></div>'
 
@@ -227,9 +292,16 @@ def run_card(r, idx, base=None):
             tile("Noise on gray", f"{pc['gray_noise_ire_rms']:.2f}", "IRE rms"),
         ]
     frames = m["frames"]
-    seq = (f'<h3 style="font-size:14px;margin:14px 0 6px">Frame sequence on the output</h3>{frame_strip(frames)}'
-           f'<p class="cap">Each cell is one field\'s frame marker. A clean output shows every frame twice, in order.</p>'
-           if frames else '<p class="cap">No frame markers decoded.</p>')
+    if r.get("field_log"):
+        seq = (f'<h3 style="font-size:14px;margin:14px 0 6px">Output fields</h3>{field_strip(r["field_log"])}'
+               f'<p class="cap">Each cell is one output field. A clean output shows every frame twice, in order; '
+               f'a dark outline marks a field of non-standard length.</p>')
+    elif frames:
+        seq = (f'<h3 style="font-size:14px;margin:14px 0 6px">Frame sequence on the output</h3>{frame_strip(frames)}'
+               f'<p class="cap">Each cell is one field\'s frame marker. A clean output shows every frame twice, in order.</p>')
+    else:
+        seq = '<p class="cap">No frame markers decoded.</p>'
+    seq = fault_html(r) + seq
     wave = (f'<h3 style="font-size:14px;margin:14px 0 6px">One picture line (CH{r["channel"]})</h3>{waveform(r["excerpt"])}'
             f'<p class="cap">Min/max envelope of a line about 60 lines into a field; the shading is the colour subcarrier.</p>'
             if r.get("excerpt") else "")
@@ -245,6 +317,22 @@ def run_card(r, idx, base=None):
   {wave}
   <p class="cap">Run {esc(r['run'])} · {r['seconds']:.2f} s captured</p>
 </section>"""
+
+
+def tolerance_html(results):
+    from run_suite import tolerance_lines
+    lines = tolerance_lines(results)
+    hunt = [r for r in results if r.get("hunt")]
+    for r in hunt:
+        H = r["hunt"]
+        state = ("clean after stress" if H["after_clean"] else "NOT clean after stress"
+                 if H["after_clean"] is False else "recovery window not captured")
+        lines.append(f"X1 stress {r['test']['params']['stress']:g}: {state}; "
+                     f"{H['stuck_or_ghost']} stuck/torn or ghosted field(s)")
+    if not lines:
+        return ""
+    items = "".join(f"<li>{esc(l)}</li>" for l in lines)
+    return f'<h2>Fault tests</h2><ul class="note" style="list-style:none;padding-left:12px">{items}</ul>'
 
 
 def write(results, path=None, title="TBC test report"):
@@ -292,6 +380,7 @@ def write(results, path=None, title="TBC test report"):
 </div>
 <p class="note">These are observations of the TBC's output, not grades. "Ideal" describes what a perfect
 TBC of each class would output for that test.</p>
+{tolerance_html(results)}
 <h2>Summary</h2>
 <div class="scroll"><table>
 <thead><tr><th>Test</th><th>Rung</th><th>Parameters</th><th>Aimed at</th><th>Output fields</th><th>H jitter</th>

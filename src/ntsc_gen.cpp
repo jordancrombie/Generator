@@ -46,6 +46,7 @@ static uint16_t *s_marker[2][MAX_MARKERS];
 static uint16_t *s_noise[perturb::NOISE_VARIANTS];  // snow lines (S9), only when the test uses them
 static uint16_t *s_dropout[perturb::DROPOUT_VARIANTS][2];  // bar lines with a dropout (L1), [variant][phase]
 static render::Style s_style;            // the test's static rendering style
+static uint16_t *s_dead;                 // no signal (0 V), for S10/V1/X1
 static int s_nsub = 1, s_ext = 0, s_cap = SAMPLES_PER_LINE;
 
 static SemaphoreHandle_t s_lock;
@@ -62,6 +63,7 @@ static float s_ppm;
 static double s_sample_hz = SAMPLE_HZ;
 static perturb::Test s_test;
 static bool s_chroma_follows = false;    // default colour-under (VHS/Betamax)
+static uint32_t s_start_frame;           // frame number the ring starts from after a rebuild
 
 // ---- Placement ------------------------------------------------------------------
 LinePlan plan(uint32_t n) {
@@ -130,12 +132,15 @@ static void write_half(int h, uint32_t frame) {
         int phase = (int)(cum + (s_chroma_follows ? 0 : p[i].e)) & 3;
         int line = slots[i].line;
         const uint16_t *buf;
-        if ((line == marker::LINE_F1 || line == marker::LINE_F2) && markers < MAX_MARKERS) {
+        // Lost lines (no signal / snow) win over everything, the marker included.
+        if (slots[i].flags & perturb::SLOT_DEAD) {
+            buf = s_dead;
+        } else if (slots[i].flags & perturb::SLOT_NOISE) {
+            buf = s_noise[perturb::noise_variant(frame, i)];
+        } else if ((line == marker::LINE_F1 || line == marker::LINE_F2) && markers < MAX_MARKERS) {
             uint16_t *mb = s_marker[h][markers++];
             render_marker(mb, frame, phase, p[i].v);
             buf = mb;
-        } else if (slots[i].flags & perturb::SLOT_NOISE) {
-            buf = s_noise[perturb::noise_variant(frame, i)];
         } else if (slots[i].flags & perturb::SLOT_DROPOUT) {
             buf = s_dropout[(slots[i].flags >> 4) & 3][phase >> 1];
         } else {
@@ -201,6 +206,8 @@ static void free_pool() {
     for (auto &nz : s_noise) { heap_caps_free(nz); nz = nullptr; }
     for (auto &var : s_dropout)
         for (auto &d : var) { heap_caps_free(d); d = nullptr; }
+    heap_caps_free(s_dead);
+    s_dead = nullptr;
 }
 
 static int find_base(const Base &b) {
@@ -260,7 +267,7 @@ static bool rebuild() {
     if (s_ext > MAX_EXT) s_ext = MAX_EXT;
     s_cap = SAMPLES_PER_LINE + s_ext;
     long budget = (long)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) - HEAP_RESERVE -
-                  (2L * MAX_MARKERS + perturb::NOISE_VARIANTS + 2 * perturb::DROPOUT_VARIANTS) * s_cap * 2;
+                  (2L * MAX_MARKERS + perturb::NOISE_VARIANTS + 2 * perturb::DROPOUT_VARIANTS + 1) * s_cap * 2;
     s_nsub = 8;
     while (s_nsub > 1 && (long)s_nbases * s_nsub * s_cap * 2 > budget) s_nsub /= 2;
 
@@ -302,7 +309,11 @@ static bool rebuild() {
                 overlay_snow(d, a0, a1 < s_cap ? a1 : s_cap, 100u + (uint32_t)j, s_levels);
             }
     }
-    if (s_test.def->kind == perturb::NOISE_BAR)
+    if (ok && perturb::uses_dead(s_test)) {
+        if (!(s_dead = alloc_line())) ok = false;
+        else for (int k = 0; k < s_cap; k++) s_dead[k] = i2s_dac::sample(0);  // DAC code 0: the lowest it goes
+    }
+    if (perturb::uses_snow(s_test))
         for (int j = 0; ok && j < perturb::NOISE_VARIANTS; j++) {
             if (!(s_noise[j] = alloc_line())) ok = false;
             else render_noise(s_noise[j], s_cap, (uint32_t)j + 1, s_levels);
@@ -310,8 +321,8 @@ static bool rebuild() {
     if (!ok) { free_pool(); xSemaphoreGive(s_lock); return false; }
 
     s_max_write_us = 0;
-    write_half(0, 0);
-    write_half(1, 1);
+    write_half(0, s_start_frame);
+    write_half(1, s_start_frame + 1);
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -384,12 +395,14 @@ bool set_clock_ppm(float ppm) {
     return true;
 }
 
-bool set_test(const perturb::Test &t) {
+bool set_test(const perturb::Test &t, uint32_t start_frame) {
     perturb::Test old = s_test;
     s_test = t;
+    s_start_frame = start_frame;
     apply_clock();
     if (rebuild()) return true;
     s_test = old;
+    s_start_frame = 0;
     apply_clock();
     rebuild();
     return false;

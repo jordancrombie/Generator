@@ -22,6 +22,7 @@ Open work is in [TODO.md](TODO.md).
 | Timing tests (H1–H5, F1–F3) | **Built and verified** against the reference model. F1 not yet measured on the scope |
 | Structure tests (S1–S9) | **Built and verified**; observed through the TBC on CH1. S4, S8 and S9 target frame synchronisers |
 | Colour and level tests (C1–C4, L1–L4) | **Built and verified**; observed through the TBC on CH1, with picture metrics (burst, hue, saturation, level, noise, hum) |
+| Fault tests (S10, S11, X1, V1) | **Built and verified.** Lost-field tolerance, a stress-and-recovery fault hunt for buggy units, and a no-signal capture of the TBC's own fallback output |
 | Device tagging and reports | **Done.** `--dut`/`--note` on every run; optional `--html` report |
 | Colour-under (VHS/Betamax) | **Default.** Direct colour (U-matic/1") available with `chroma follows` |
 | Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 |
@@ -118,6 +119,10 @@ through.
 | L2 | additive noise, SNR dB (100 IRE / rms) | both | 40, 34, 28, 22, 16 |
 | L3 | 60 Hz hum, IRE p-p | both | 5, 10, 20, 40 |
 | L4 | video level, % | both | 80, 90, 110, 120 |
+| S10 | N consecutive fields of no signal (0 V), once a second | both | 1 … 11 (11 = "∞, more than 10") |
+| S11 | N consecutive fields of snow, once a second | both | 1 … 11 |
+| V1 | no signal at all, to capture the TBC's own fallback output | both | 1 |
+| X1 | fault hunt: 3 s cycle of 1 s clean, 1 s stress, 1 s clean | both | stress 1 jitter 200 ns · 2 dropped fields · 3 lost fields · 4 noise bar + jitter · 5 "bad tape" mix |
 
 C3, L2 and L3 reuse each line's pre-rendered copies (normally sub-sample
 timing shifts) as phase, noise or DC versions. The resolution is therefore
@@ -168,12 +173,44 @@ scale + offset). A run whose report fails is always kept. Kept runs are
 large, 100 MB per 0.5 s at 50 MS/s, and `runs/` is not committed. Where the time goes is broken down in
 [docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
+## Fault tests and the fallback guard
+
+Every output field is classified by what it carried:
+
+| Class | Meaning |
+|---|---|
+| ours | carries our frame marker (frame number known) |
+| ours, unmarked | our picture, but the marker line was lost (e.g. a gap ended mid-field) |
+| blended (ghosted) | our marker with cells at in-between levels: two frames mixed |
+| blank | black/blank field |
+| garbled | picture that matches neither ours nor a uniform pattern (seen while a TBC re-acquires) |
+| TBC's own pattern | a uniform full-field picture that isn't ours, e.g. the AVT-8710's fallback bars |
+
+**Picture measurements only use fields carrying our marker,** so a TBC that
+gives up and shows its own bars can never pass as our signal. V1 checks this:
+with no input, the AVT-8710's bars measure a yellow hue indistinguishable
+from ours, but every field classifies as "TBC's own pattern" and nothing is
+measured.
+
+- **S10/S11** report, per rung, whether the TBC rode through N lost fields
+  (no fallback, no sync loss) and how: held the last frame, blanked, or
+  garbled on recovery. A suite across all rungs gives the tolerance: the
+  largest N handled, or "∞ (>10)".
+- **X1** splits the output by input frame into before / stress / settling
+  (first 3 frames after stress) / after. It counts fields that aren't ours,
+  ghosted fields, stuck/torn frames (fields from different frames),
+  back-steps and repeats. A unit that stays faulty after the stress
+  ("ghost mode") shows up in the "after" window.
+
+Slow tests capture longer automatically: S10/S11 1.3 s at 25 MS/s, X1 3.3 s
+at 12.5 MS/s.
+
 ## Serial commands (921600 baud)
 
 | Command | |
 |---|---|
 | `tests` | list the test catalog and each test's ladder |
-| `test <id> [rung] [seed]` | start a test; `test V0` is the clean baseline |
+| `test <id> [rung] [seed] [start_frame]` | start a test; `test V0` is the clean baseline. `start_frame` begins at a given frame (e.g. inside a loss or stress window) |
 | `chroma [under\|follows]` | colour-under (default, VHS/Betamax) or direct colour |
 | `manifest` | the current run's manifest, one JSON line |
 | `list` / `p <n\|name>` | list or select pattern: `smpte_bars`, `eia_bars_75`, `staircase`, `flat`, `crosshatch`, `black` |
@@ -211,6 +248,9 @@ measured yet.
 | L2 noise 4 IRE rms | ~2.6 IRE rms out (some noise reduction or bandwidth limiting) |
 | L3 hum 20 / 40 IRE p-p | Blanking clamped flat, but the gray bar reads higher (84 / 95 IRE vs 79); not yet explained |
 | L4 level 80 % / 120 % | Passed unchanged (no AGC) |
+| V1 no signal | Outputs its own bars: 8 full-field bars, 100 % white (100/69/56/48/36/28/16/7.5 IRE) |
+| S10/S11 lost fields | **Rides through up to 6 consecutive lost fields; from 7 falls back to its own bars.** The gap shows as black, often followed by one garbled field on recovery |
+| X1 fault hunt (all 5 stresses) | Clean after every stress burst. Under stress: stuck/torn fields and back-steps with dropped/lost fields (expected for a frame sync), and 1–2 ghosted fields under jitter alone |
 
 Picture figures are relative to the TBC's own V0 output (gray 79 IRE, yellow
 chroma 70 IRE p-p, burst 43 IRE). CH1 is still unterminated, so absolute

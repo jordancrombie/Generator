@@ -17,9 +17,14 @@ order. Measured facts and open issues live in
 - [ ] Re-baseline V0 per device once the chain is terminated.
 
 ## AVT-8710
-- [ ] **Design a test to search for the AVT-8710's bug(s).** Needs a
-      description of the symptom (what goes wrong, when, how often), so the
-      test can provoke it repeatably and the report can catch it.
+- [x] Research the "black unit" faults and build a test for them (X1,
+      2026-10-13; see bench notes).
+- [ ] Run X1 on a known-good unit (a green one) and a suspect black one, to
+      set what "buggy" looks like in the numbers (ghosted fields per minute,
+      stuck fields without field loss, anything in the "after" window).
+- [ ] A longer X1 (minutes of bad-tape stress) to provoke "ghost mode",
+      which forum reports say persists until a power-cycle; plus a warm-up
+      run, since some reports point at heat.
 - [ ] Explain L3: with hum on the input, blanking is clamped flat but the
       gray bar reads higher (84 / 95 IRE vs 79 at 20 / 40 IRE p-p hum).
 - [ ] C2: no colour killer (passes chroma with a random hue when burst is

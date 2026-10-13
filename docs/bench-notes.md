@@ -74,6 +74,9 @@ so runs are now deleted after their report unless `--keep` is given.
   (910 samples × ppm × 10⁻⁶), where float rounding in C and Python disagree.
   F2 is quantized in exact 64-bit integer arithmetic instead.
 
+- **DMA stop signature, more data:** also about once per verifier run at
+  X1 stress 5 (no signal, snow and a 5 µs skew mixed). Never during a capture
+  so far.
 - **Open issue: the I2S DMA occasionally stops.** Seen as the frame counter
   freezing, with `diag` showing the same descriptor every time. It happens
   about once per full `verify_timing.py` run, always on the switch from S8
@@ -109,6 +112,20 @@ so runs are now deleted after their report unless `--keep` is given.
   (540 mV of sync instead of 286 mV).
 
 ## AVT-8710
+
+- **Its fallback output (no input)** is 8 full-field bars at 100 % white
+  (100, 69, 56, 48, 36, 28, 16, 7.5 IRE). The yellow bar's hue matches ours
+  (~165°), so a bar-shape check alone can be fooled; our frame marker can't
+  be. The analysis only measures fields that carry our marker.
+- **Lost fields:** rides through up to 6 consecutive fields of no signal or
+  snow (black during the gap, often one garbled field as it re-acquires);
+  from 7 it switches to its own bars.
+- **Reported faults of the newer "black" units** (forum reports, no
+  manufacturer statement): stuck/frozen fields, random dropped and repeated
+  frames, a "ghost mode" after bad tape that only a power-cycle clears, and
+  tearing, jitter and ghosting. X1 is designed around these. The unit tested
+  here recovered cleanly from every X1 stress, with 1–2 ghosted fields under
+  jitter alone.
 
 - **It blanks lines 10–21** (the vertical interval). That is why the frame
   marker lives on picture lines 24 and 287.

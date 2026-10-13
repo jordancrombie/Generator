@@ -39,7 +39,16 @@ enum Kind : uint8_t {
     NOISE,           // L2: p1 = SNR dB (unweighted, 100 IRE / rms)
     HUM,             // L3: p1 = 60 Hz hum, IRE peak-to-peak
     VIDEO_LEVEL,     // L4: p1 = picture level, % of nominal
+    LOSS_DEAD,       // S10: p1 = consecutive fields of no signal (0 V), once a second
+    LOSS_SNOW,       // S11: p1 = consecutive fields of snow (no sync), once a second
+    NO_SIGNAL,       // V1: no signal at all (to see a TBC's own fallback output)
+    FAULT_HUNT,      // X1: p1 = stress type; 3 s cycle: 1 s clean, 1 s stress, 1 s clean
 };
+
+// X1 cycle: frames [0, 30) clean, [30, 60) stress, [60, 90) clean (recovery).
+constexpr int HUNT_CYCLE = 90, HUNT_STRESS_START = 30, HUNT_STRESS_END = 60;
+// S10/S11: fields are lost in the first p1 of every LOSS_PERIOD fields.
+constexpr int LOSS_PERIOD = 60;
 
 // What a line's pre-rendered copies (the `v` index) differ in. Timing tests
 // use them for sub-sample shifts; C3, L2 and L3 instead need a few versions of
@@ -57,7 +66,8 @@ enum VariantMode : uint8_t { VM_TIMING, VM_CARRIER, VM_NOISE, VM_DC };
 // test's alternate sync structure (alt_mods), or replaced by a line of snow.
 // SLOT_DROPOUT lines carry a dropout; bits 4-5 of the flags pick which of
 // DROPOUT_VARIANTS (segment positions) it is.
-enum SlotFlags : uint8_t { SLOT_HALF = 1, SLOT_ALT = 2, SLOT_NOISE = 4, SLOT_DROPOUT = 8 };
+// SLOT_DEAD lines are no signal at all (0 V, the sync-tip level).
+enum SlotFlags : uint8_t { SLOT_HALF = 1, SLOT_ALT = 2, SLOT_NOISE = 4, SLOT_DROPOUT = 8, SLOT_DEAD = 64 };
 constexpr int DROPOUT_VARIANTS = 4;
 struct Slot { uint16_t line; uint8_t flags; };
 constexpr int HALF_SAMPLES = 456;  // 455 rounded to the DAC's sample pairs
@@ -70,7 +80,7 @@ struct Def {
     Kind kind;
     const char *p1_name, *p2_name;
     int rungs;
-    float p1[10], p2[10];
+    float p1[12], p2[12];
     const char *targets;      // TBC classes the test is aimed at: "line,frame", "frame"
     const char *ideal_line;   // what a perfect line TBC outputs
     const char *ideal_frame;  // what a perfect frame TBC / synchroniser outputs
@@ -114,6 +124,10 @@ uint32_t frame_start_mod4(const Test &t, uint32_t frame);
 uint8_t alt_mods(const Test &t, int line);
 // Which snow rendering a SLOT_NOISE slot uses.
 inline int noise_variant(uint32_t frame, int slot) { return (int)((frame * 7 + (uint32_t)slot) % NOISE_VARIANTS); }
+
+// Whether the test needs snow lines / a no-signal line rendered.
+bool uses_snow(const Test &t);
+bool uses_dead(const Test &t);
 
 // Static rendering style for the whole test (S1, S2, C1, C2, C4, L2, L4).
 render::Style base_style(const Test &t);

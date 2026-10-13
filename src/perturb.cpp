@@ -77,6 +77,17 @@ const Def DEFS[] = {
      "hum passed", "hum removed by clamping (DC restore)"},
     {"L4", 0x54, "video level", VIDEO_LEVEL, "white_pct", "", 4, {80, 90, 110, 120}, {0}, BOTH,
      "level passed unchanged", "level passed, or corrected by AGC/proc amp"},
+    {"S10", 0x3A, "lost fields (no signal)", LOSS_DEAD, "fields", "", 11, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, {0}, BOTH,
+     "passes the gap through and relocks at once",
+     "holds the last frame through the gap (no fallback bars, no roll) and relocks at once"},
+    {"S11", 0x3B, "lost fields (snow)", LOSS_SNOW, "fields", "", 11, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, {0}, BOTH,
+     "passes the gap through and relocks at once",
+     "holds the last frame through the gap (no fallback bars, no roll) and relocks at once"},
+    {"V1", 0x01, "no signal", NO_SIGNAL, "", "", 1, {0}, {0}, BOTH,
+     "nothing, or its own fallback output", "its own fallback output (e.g. bars or black)"},
+    {"X1", 0x61, "fault hunt (stress, recovery)", FAULT_HUNT, "stress", "", 5, {1, 2, 3, 4, 5}, {0}, BOTH,
+     "recovers fully after each stress burst",
+     "no stuck or blended fields; clean again within a few frames of each stress burst"},
 };
 const int NUM_DEFS = sizeof(DEFS) / sizeof(DEFS[0]);
 
@@ -118,9 +129,22 @@ static float gauss(uint32_t seed, uint32_t n) {
     return ((float)sum - mean) / sd;
 }
 
+// X1: whether frame `frame` is in the stress part of its 3 s cycle.
+static inline bool hunt_stress(uint32_t frame) {
+    uint32_t ph = frame % HUNT_CYCLE;
+    return ph >= HUNT_STRESS_START && ph < HUNT_STRESS_END;
+}
+
 double shift_ns(const Test &t, uint32_t n) {
     const double line_ns = 1e9 / FH_HZ;
     switch (t.def->kind) {
+        case FAULT_HUNT: {  // X1 stress types 1, 4, 5 jitter; 5 adds a 5 us head-switch skew
+            if (!hunt_stress(n / LINES_PER_FRAME)) return 0.0;
+            int s = (int)t.p1, L = n % LINES_PER_FRAME + 1;
+            float ns = s == 1 ? 200.0f * gauss(t.seed, n) : (s == 4 || s == 5) ? 100.0f * gauss(t.seed, n) : 0.0f;
+            if (s == 5 && !(L >= 257 && L < 520)) ns += 5000.0f;
+            return ns;
+        }
         case FH_UNLOCKED:  // H runs p1 ppm fast: each line starts that much earlier
             return -(double)n * line_ns * t.p1 * 1e-6;
         case FREQ_DRIFT: {  // rate offset p1 sin(2 pi t / p2) ppm, integrated: peak p1e-6 * p2/pi s
@@ -164,13 +188,30 @@ float max_delta_samples(const Test &t) {
         case DISPLACED_LINE: return fabsf(t.p1);
         case FH_UNLOCKED:
         case FREQ_DRIFT: return fabsf(t.p1) * 1e-6f * (float)(1e9 / FH_HZ) / ns + 1;
+        case FAULT_HUNT: {
+            int s = (int)t.p1;
+            return s == 1 ? 2 * 3.47f * 200 / ns : s == 4 ? 2 * 3.47f * 100 / ns : s == 5 ? (5000 + 2 * 3.47f * 100) / ns : 0;
+        }
         default: return 0;
     }
 }
 
 float clock_ppm(const Test &t) { return t.def->kind == FREQ_OFFSET ? t.p1 : 0.0f; }
 
+// X1 stress type 2 drops field 2 of every odd frame in the stress window.
+static inline bool hunt_drops_field(const Test &t, uint32_t frame) {
+    return t.def->kind == FAULT_HUNT && (int)t.p1 == 2 && hunt_stress(frame) && (frame & 1);
+}
+
 uint32_t frame_start_mod4(const Test &t, uint32_t frame) {
+    if (t.def->kind == FAULT_HUNT && (int)t.p1 == 2) {
+        // Dropped-field frames are 0 (mod 4); count them before `frame`.
+        auto odd_in = [](uint32_t a, uint32_t b) { return b > a ? (b / 2) - (a / 2) : 0u; };  // odd f in [a, b)
+        uint32_t full = frame / HUNT_CYCLE, rem = frame % HUNT_CYCLE;
+        uint32_t per = odd_in(HUNT_STRESS_START, HUNT_STRESS_END);
+        uint32_t drops = full * per + odd_in(HUNT_STRESS_START, rem < (uint32_t)HUNT_STRESS_END ? (rem > (uint32_t)HUNT_STRESS_START ? rem : HUNT_STRESS_START) : HUNT_STRESS_END);
+        return (2 * (frame - drops)) & 3;
+    }
     // A standard frame is 525 x 910 samples = 2 (mod 4); so are frames with
     // whole lines added or removed in pairs (S6). A 240p frame (524 lines)
     // and a dropped-field frame (262 lines + 456) are 0 (mod 4).
@@ -246,6 +287,39 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             }
             break;
         }
+        case LOSS_DEAD:
+        case LOSS_SNOW:
+        case NO_SIGNAL: {
+            uint8_t lost = t.def->kind == LOSS_SNOW ? SLOT_NOISE : SLOT_DEAD;
+            for (int L = 1; L <= LINES_PER_FRAME; L++) {
+                // Field 1 = lines 1..263 (263 carries its last half-line), field 2 = 264..525.
+                uint32_t field = 2 * frame + (L >= 264 ? 1 : 0);
+                bool gone = t.def->kind == NO_SIGNAL || (int)(field % LOSS_PERIOD) < (int)t.p1;
+                add(L, gone ? lost : 0);
+            }
+            break;
+        }
+        case FAULT_HUNT: {
+            int s = (int)t.p1;
+            bool stress = hunt_stress(frame);
+            if (hunt_drops_field(t, frame)) {  // stress 2: field 1 only
+                for (int L = 1; L <= 262; L++) add(L, 0);
+                add(263, SLOT_HALF);
+                break;
+            }
+            int top = 30 + (int)((frame * 23) % 200), h = s == 4 ? 40 : 20;
+            for (int L = 1; L <= LINES_PER_FRAME; L++) {
+                uint8_t f = 0;
+                uint32_t field = 2 * frame + (L >= 264 ? 1 : 0);
+                if (stress && s == 3 && field % 20 < 3) f = SLOT_DEAD;           // 3 fields lost every 10 frames
+                if (stress && s == 5 && field % 30 < 2) f = SLOT_DEAD;           // 2 fields lost every 15 frames
+                if (stress && (s == 4 || s == 5) && !f &&
+                    ((L >= top && L < top + h) || (L >= top + 263 && L < top + 263 + h)))
+                    f = SLOT_NOISE;                                              // noise bar
+                add(L, f);
+            }
+            break;
+        }
         case DROPOUTS: {  // p2 dropouts per field, on lines 30..170 and 292..432 (colour-bar rows)
             for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, 0);
             for (int j = 0; j < (int)t.p2; j++) {
@@ -267,6 +341,16 @@ int frame_slots(const Test &t, uint32_t frame, Slot *out, int max) {
             for (int L = 1; L <= LINES_PER_FRAME; L++) add(L, alt_mods(t, L) ? SLOT_ALT : 0);
     }
     return n;
+}
+
+bool uses_snow(const Test &t) {
+    return t.def->kind == NOISE_BAR || t.def->kind == LOSS_SNOW ||
+           (t.def->kind == FAULT_HUNT && ((int)t.p1 == 4 || (int)t.p1 == 5));
+}
+
+bool uses_dead(const Test &t) {
+    return t.def->kind == LOSS_DEAD || t.def->kind == NO_SIGNAL ||
+           (t.def->kind == FAULT_HUNT && ((int)t.p1 == 3 || (int)t.p1 == 5));
 }
 
 render::Style base_style(const Test &t) {

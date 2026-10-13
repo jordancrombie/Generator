@@ -11,7 +11,9 @@ bool begin(int pattern, Levels lv);
 bool set_pattern(int pattern);
 bool set_levels(Levels lv);
 bool set_clock_ppm(float ppm);   // base trim of the sample clock
-bool set_test(const perturb::Test &t);
+// `start_frame` sets the first frame number (to begin inside a test's
+// stress or loss window, e.g. for verification).
+bool set_test(const perturb::Test &t, uint32_t start_frame = 0);
 // Timing errors move the colour carrier too (direct colour, U-matic/1")
 // or leave it on a stable reference (colour-under, VHS/Betamax: default).
 bool set_chroma_follows(bool follows);
