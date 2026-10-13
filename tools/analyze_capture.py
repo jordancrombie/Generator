@@ -21,6 +21,11 @@ top = np.percentile(x, 99.5)
 mid = tip + 0.15 * (top - tip)          # well below blanking, above sync tip
 below = x < mid
 fall = np.where(~below[:-1] & below[1:])[0]
+rise = np.where(below[:-1] & ~below[1:])[0]
+# keep only real sync pulses (> 2 us low); chroma troughs can cross the slicer
+ri = np.searchsorted(rise, fall)
+ok_ = ri < len(rise)
+fall = fall[ok_][(rise[ri[ok_]] - fall[ok_]) > 2 * US]
 fall_t = fall + (x[fall] - mid) / (x[fall] - x[fall + 1])
 d = np.diff(fall_t)
 hlines = np.where(np.abs(d / US - 63.556) < 1.0)[0]   # full-line H syncs

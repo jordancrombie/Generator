@@ -15,11 +15,14 @@ def dump(s, idx):
     buf = b""; t = time.time()
     while time.time() - t < 3:
         buf += s.read(4096)
-        if buf.count(b"\n") >= 16 and buf.rstrip().endswith(b"\n") is False and len(buf) > 1900: break
+        if buf.count(b"\n") >= 17 and len(buf) > 1900: break
     lines = buf.decode().split("\n")
     i = next(k for k, l in enumerate(lines) if l.startswith(f"line {idx} "))
-    hexs = "".join(l.strip() for l in lines[i + 1:i + 16])
-    return np.array([int(hexs[j:j + 2], 16) for j in range(0, len(hexs), 2)], float)
+    n = int(lines[i].split("n=")[1])
+    hexs = "".join(l.strip() for l in lines[i + 1:])[: 2 * n]
+    codes = np.array([int(hexs[j:j + 2], 16) for j in range(0, len(hexs), 2)], float)
+    # Buffers put sync LINE_ORIGIN samples in; re-base so sync is at sample 0.
+    return codes[ORIGIN:ORIGIN + 910]
 
 def info(s):
     s.reset_input_buffer(); s.write(b"info\n"); time.sleep(0.3)
@@ -29,12 +32,14 @@ def info(s):
 
 s = serial.Serial(PORT, 115200, timeout=0.2)
 cfg = info(s)
+ORIGIN = int(cfg.get("line_origin_samples", 0))
 sync_c, white_c = cfg["sync_code"], cfg["white_code"]
 ire = lambda c: (c - sync_c) * 140.0 / (white_c - sync_c) - 40.0
 
-def demod(x, k0, n, idx):
-    """U, V of samples k0..k0+n-1 (subcarrier phase from chain index)."""
-    off = (2 * idx) % 4
+def demod(x, k0, n, seq):
+    """U, V of samples k0..k0+n-1. `seq` is the line's position in the 1050-line
+    colour sequence (frame B line 1 = 525), which sets its subcarrier phase."""
+    off = (2 * seq) % 4
     k = np.arange(k0, k0 + n); ph = (k + off) % 4
     sin = np.array([0, 1, 0, -1])[ph]; cos = np.array([1, 0, -1, 0])[ph]
     seg = x[k0:k0 + n]
@@ -63,12 +68,13 @@ def check(name, val, lo, hi, unit=""):
     good = lo <= val <= hi; ok &= good
     print(f"  {'PASS' if good else 'FAIL'} {name}: {val:.2f}{unit}  (expect {lo}..{hi})")
 
-for idx, desc in [(30, "line 31 F1 (bars)"), (561 - 1, "line 36 F2-frame (bars, other colour frame)")]:
-    x = ire(dump(s, idx)); print(f"{desc}  [chain {idx}]")
+# (ring index, position in colour sequence, description); frame B's half starts at ring index 600
+for idx, seq, desc in [(30, 30, "line 31 frame A (bars)"), (600 + 35, 525 + 35, "line 36 frame B (bars, other colour frame)")]:
+    x = ire(dump(s, idx)); print(f"{desc}  [ring {idx}]")
     p = pulses(x)
     check("hsync width", p[0][1], 4.6, 4.8, " us")
     check("blank level", x[int(8.1 * US):int(9.1 * US)].mean(), -1.5, 1.5, " IRE")
-    k0 = int(round(5.3 * US + 6)); _, bu, bv = demod(x, k0, 24, idx)
+    k0 = int(round(5.3 * US + 6)); _, bu, bv = demod(x, k0, 24, seq)
     bamp = math.hypot(bu, bv); bph = math.degrees(math.atan2(bv, bu)) % 360
     check("burst amplitude (peak)", bamp, 18, 22, " IRE"); check("burst phase (U=0)", bph, 179, 181, " deg")
     names = ["gray", "yellow", "cyan", "green", "magenta", "red", "blue"]
@@ -78,7 +84,7 @@ for idx, desc in [(30, "line 31 F1 (bars)"), (561 - 1, "line 36 F2-frame (bars, 
     a0, w = 9.4 * US, (52.6 * US) / 7
     for i, nm in enumerate(names):
         c = int(a0 + (i + 0.5) * w) & ~3
-        y, u, v = demod(x, c - 12, 24, idx)
+        y, u, v = demod(x, c - 12, 24, seq)
         amp = 2 * math.hypot(u, v)
         hue = (math.degrees(math.atan2(v, u)) - bph + 180) % 360  # relative to burst at 180
         ey, ea, eh = exp[nm]
