@@ -1,5 +1,5 @@
 // NTSC composite test-signal generator for TBC testing.
-// Output: GPIO25 (DAC1). Control: serial 115200, line-based commands ("help").
+// Output: GPIO25 (DAC1). Control: serial 921600, line-based commands ("help").
 #include <Arduino.h>
 #include "driver/rtc_io.h"
 
@@ -87,6 +87,7 @@ static void handle(String line) {
         int n = gen::read_line(arg.toInt(), codes, sizeof(codes));
         Serial.printf("line %d n=%d\n", (int)arg.toInt(), n);
         for (int k = 0; k < n; k++) Serial.printf("%02x%s", codes[k], (k % 64 == 63 || k == n - 1) ? "\n" : "");
+        Serial.println("end");
     } else if (cmd == "diag") {
         for (int i = 0; i < 5; i++) { Serial.printf("dscr %08x\n", (unsigned)i2s_dac::current_descriptor()); delayMicroseconds(37); }
     } else if (cmd == "dc") {
@@ -145,7 +146,7 @@ static void handle(String line) {
 }
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(921600);  // keep in step with BAUD in tools/gen_cmd.py
     delay(200);
     Serial.println("starting NTSC generator...");
     bool r = gen::begin(0, DEFAULT_LEVELS);

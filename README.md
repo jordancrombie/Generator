@@ -10,6 +10,8 @@ score how well the TBC repaired it.
 
 The test catalog, scoring approach and grader contract are in the design doc,
 [TBC Test Catalog & Grader Contract](https://claude.ai/code/artifact/45d38c23-276f-4e00-b547-f803ce8926ae).
+Measured hardware and toolchain facts (settling times, quirks, pitfalls) are in
+[docs/bench-notes.md](docs/bench-notes.md). Read it before changing the tools.
 
 ## Status (2026-10-13)
 
@@ -109,18 +111,24 @@ sockets, so look it up:
 The host tools need `numpy` and `pyserial`.
 
 ```
-python3 tools/run_test.py H1 4                  # set test H1 rung 4, settle, capture CH1 + CH2
-python3 tools/run_test.py S7 4 --seconds 0.6    # longer capture to catch several dropped fields
+python3 tools/run_suite.py                      # smoke set: one rung of every test (~3 s each)
+python3 tools/run_suite.py H1:all S7:4-5        # chosen tests and rungs on one scope session
+python3 tools/run_test.py H1 4                  # a single rung
+python3 tools/run_test.py H1 4 --keep           # ...and keep its capture for debugging
 python3 tools/observe_tbc.py runs/<run>         # what the TBC passed, dropped or repeated
-python3 tools/verify_timing.py                  # check the firmware against the reference model
+python3 tools/verify_timing.py                  # check the firmware against the reference model (~25 s)
 python3 tools/check_lines.py                    # check colour bars as rendered
 ```
 
-`run_test.py` writes `runs/<timestamp>_<test>_r<rung>/` containing
-`manifest.json` and `capture.npz` (raw int16 per channel, volts = raw ×
-scale + offset). `runs/` is not committed.
+Every run prints `observe_tbc`'s report on the TBC output. The capture is
+then **deleted by default**. With `--keep` (on `run_test.py` or
+`run_suite.py`), the run stays in `runs/<timestamp>_<test>_r<rung>/` as
+`manifest.json` plus `capture.npz` (raw int16 per channel, volts = raw ×
+scale + offset). A run whose report fails is always kept. Kept runs are
+large, 100 MB per 0.5 s at 50 MS/s, and `runs/` is not committed. Where the time goes is broken down in
+[docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
-## Serial commands (115200 baud)
+## Serial commands (921600 baud)
 
 | Command | |
 |---|---|
@@ -169,8 +177,11 @@ rms line jitter.
 | `src/i2s_dac.*` | I2S/DAC/APLL hardware setup and EOF interrupt |
 | `src/patterns.*` | test patterns as Y/U/V segments |
 | `tools/perturb_model.py` | reference model of perturbations, frame structure and marker |
-| `tools/run_test.py`, `tools/dwf_scope.py` | test runner and ADP2230 capture |
+| `tools/run_suite.py`, `tools/run_test.py` | run many rungs on one scope session, or one rung |
+| `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
 | `tools/observe_tbc.py` | TBC output report from a run |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
-| `tools/gen_cmd.py`, `dwf_list.py`, `dwf_capture.py` | serial and scope utilities |
+| `tools/gen_cmd.py` | serial helpers (`BAUD`, `request`, `dump_line`) and a command-line sender |
+| `tools/dwf_list.py`, `tools/dwf_capture.py` | scope utilities |
+| `docs/bench-notes.md` | measured hardware, toolchain and signal facts |
