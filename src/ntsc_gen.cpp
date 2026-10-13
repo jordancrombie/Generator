@@ -30,18 +30,20 @@ static constexpr int MAX_MARKERS = 4;    // marker lines per frame (240p shows e
 static constexpr int HEAP_RESERVE = 48 * 1024;
 static constexpr int SAFE_CAP = SAMPLES_PER_LINE + MAX_EXT;
 
-struct Base { Half a, b; uint8_t phase; int16_t key; bool nosync; };
+struct Base { Half a, b; uint8_t phase; int16_t key; uint8_t mods; };
 
 static lldesc_t *s_ring;                 // [2 * HALF_CAP]
 static int s_count[2];                   // lines in each half
 static uint16_t *s_safe;                 // parking line while the pool is rebuilt
 static Base s_bases[MAX_BASES];
-// Base per NTSC line, [no-sync copy][subcarrier phase 0 or 2 at line start].
+// Base per NTSC line, [standard / the test's alternate rendering (alt_mods)]
+// [subcarrier phase 0 or 2 at line start].
 // Every descriptor length is even, so lines only ever start on phase 0 or 2.
 static uint8_t s_base_idx[LINES_PER_FRAME + 1][2][2];
 static int s_nbases;
 static uint16_t **s_pool;                // [base * nsub + v]
 static uint16_t *s_marker[2][MAX_MARKERS];
+static uint16_t *s_noise[perturb::NOISE_VARIANTS];  // snow lines (S9), only when the test uses them
 static int s_nsub = 1, s_ext = 0, s_cap = SAMPLES_PER_LINE;
 
 static SemaphoreHandle_t s_lock;
@@ -49,6 +51,8 @@ static TaskHandle_t s_task;
 static uint32_t s_written[2];            // frame number last written to each half
 static volatile uint32_t s_max_write_us;
 static volatile bool s_hold;
+static volatile uint32_t s_dma_restarts;
+static char s_restart_note[48];          // test and time of the last watchdog restart
 
 static int s_pattern;
 static Levels s_levels;
@@ -107,9 +111,11 @@ static void write_half(int h, uint32_t frame) {
             uint16_t *mb = s_marker[h][markers++];
             render_marker(mb, frame, phase, p[i].v);
             buf = mb;
+        } else if (slots[i].flags & perturb::SLOT_NOISE) {
+            buf = s_noise[perturb::noise_variant(frame, i)];
         } else {
-            int nosync = (slots[i].flags & perturb::SLOT_NOSYNC) ? 1 : 0;
-            buf = s_pool[s_base_idx[line][nosync][phase >> 1] * s_nsub + p[i].v];
+            int alt = (slots[i].flags & perturb::SLOT_ALT) ? 1 : 0;
+            buf = s_pool[s_base_idx[line][alt][phase >> 1] * s_nsub + p[i].v];
         }
         d[i].size = s_cap * 2;
         d[i].length = len * 2;
@@ -135,7 +141,17 @@ static void IRAM_ATTR on_eof(uint32_t desc) {
 static void frame_task(void *) {
     for (;;) {
         uint32_t bits = 0;
-        xTaskNotifyWait(0, 0xFFFFFFFF, &bits, portMAX_DELAY);
+        // A frame ends every ~33 ms. If none ends for 200 ms the DMA has
+        // stopped (seen once, cause unknown): restart it and count it.
+        if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(200)) == pdFALSE) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            i2s_dac::restart(s_ring);
+            s_dma_restarts++;
+            snprintf(s_restart_note, sizeof(s_restart_note), "%s r%d at %lu ms", s_test.def->id, s_test.rung,
+                     (unsigned long)(esp_timer_get_time() / 1000));
+            xSemaphoreGive(s_lock);
+            continue;
+        }
         if (s_hold) continue;
         xSemaphoreTake(s_lock, portMAX_DELAY);
         // When half h finishes, the DMA moves on to the other half; h plays
@@ -157,12 +173,13 @@ static void free_pool() {
     }
     for (auto &half : s_marker)
         for (auto &m : half) { heap_caps_free(m); m = nullptr; }
+    for (auto &nz : s_noise) { heap_caps_free(nz); nz = nullptr; }
 }
 
 static int find_base(const Base &b) {
     for (int i = 0; i < s_nbases; i++)
         if (s_bases[i].a == b.a && s_bases[i].b == b.b && s_bases[i].phase == b.phase && s_bases[i].key == b.key &&
-            s_bases[i].nosync == b.nosync)
+            s_bases[i].mods == b.mods)
             return i;
     if (s_nbases >= MAX_BASES) return -1;
     s_bases[s_nbases] = b;
@@ -191,16 +208,21 @@ static bool rebuild() {
         LineSpec ls = line_spec(L);
         bool colour = ls.a == H_BLANK || ls.a == H_ACTIVE;
         int16_t key = (int16_t)(ls.row >= 0 ? pat.row_key(ls.row) : -1);
-        for (int ns = 0; ns < 2; ns++) {
-            if (ns && !perturb::needs_nosync(s_test, L)) {
+        uint8_t alt_mods = perturb::alt_mods(s_test, L);
+        // An unserrated V-sync that continues from the previous line must
+        // start low, not at blanking.
+        if ((alt_mods & MOD_VS_UNSERRATED) && ls.a == H_VS && line_spec(L == 1 ? LINES_PER_FRAME : L - 1).b == H_VS)
+            alt_mods |= MOD_LOW_START;
+        for (int alt = 0; alt < 2; alt++) {
+            if (alt && !alt_mods) {
                 s_base_idx[L][1][0] = s_base_idx[L][0][0];
                 s_base_idx[L][1][1] = s_base_idx[L][0][1];
                 continue;
             }
             for (int ph = 0; ph < 2; ph++) {
-                int i = find_base({ls.a, ls.b, (uint8_t)(colour ? 2 * ph : 0), key, ns == 1});
+                int i = find_base({ls.a, ls.b, (uint8_t)(colour ? 2 * ph : 0), key, (uint8_t)(alt ? alt_mods : 0)});
                 if (i < 0) { xSemaphoreGive(s_lock); return false; }
-                s_base_idx[L][ns][ph] = (uint8_t)i;
+                s_base_idx[L][alt][ph] = (uint8_t)i;
             }
         }
     }
@@ -210,7 +232,7 @@ static bool rebuild() {
     if (s_ext > MAX_EXT) s_ext = MAX_EXT;
     s_cap = SAMPLES_PER_LINE + s_ext;
     long budget = (long)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) - HEAP_RESERVE -
-                  2L * MAX_MARKERS * s_cap * 2;
+                  (2L * MAX_MARKERS + perturb::NOISE_VARIANTS) * s_cap * 2;
     s_nsub = 8;
     while (s_nsub > 1 && (long)s_nbases * s_nsub * s_cap * 2 > budget) s_nsub /= 2;
 
@@ -228,13 +250,18 @@ static bool rebuild() {
         for (int v = 0; v < s_nsub; v++) {
             uint16_t *buf = alloc_line();
             if (!buf) { ok = false; break; }
-            render_line(buf, s_cap, b.a, b.b, b.phase, origin_of(v), carrier_of(v), segs, nseg, s_levels, b.nosync);
+            render_line(buf, s_cap, b.a, b.b, b.phase, origin_of(v), carrier_of(v), segs, nseg, s_levels, b.mods);
             s_pool[i * s_nsub + v] = buf;
         }
     }
     for (auto &half : s_marker)
         for (auto &m : half)
             if (ok && !(m = alloc_line())) ok = false;
+    if (s_test.def->kind == perturb::NOISE_BAR)
+        for (int j = 0; ok && j < perturb::NOISE_VARIANTS; j++) {
+            if (!(s_noise[j] = alloc_line())) ok = false;
+            else render_noise(s_noise[j], s_cap, (uint32_t)j + 1, s_levels);
+        }
     if (!ok) { free_pool(); xSemaphoreGive(s_lock); return false; }
 
     s_max_write_us = 0;
@@ -244,8 +271,15 @@ static bool rebuild() {
     return true;
 }
 
+// Reprogram the APLL only when the rate actually changes: it clocks the DMA,
+// and retuning it on every test change is the main suspect for the rare DMA
+// stops the frame watchdog recovers from.
 static void apply_clock() {
-    s_sample_hz = i2s_dac::set_sample_rate(SAMPLE_HZ * (1.0 + (s_ppm + perturb::clock_ppm(s_test)) * 1e-6));
+    static double current = 0;
+    double want = SAMPLE_HZ * (1.0 + (s_ppm + perturb::clock_ppm(s_test)) * 1e-6);
+    if (want == current) return;
+    current = want;
+    s_sample_hz = i2s_dac::set_sample_rate(want);
 }
 
 // ---- API --------------------------------------------------------------------------
@@ -267,7 +301,9 @@ bool begin(int pattern, Levels lv) {
         d.length = SAMPLES_PER_LINE * 2;
         d.buf = (const uint8_t *)s_safe;
         d.owner = 1;
-        d.eof = i == LINES_PER_FRAME - 1;
+        // Every descriptor from line 525 on (unused until a frame grows
+        // longer) also leads to the other half, so no path runs off the ring.
+        d.eof = i >= LINES_PER_FRAME - 1;
         d.empty = (uint32_t)(d.eof ? &s_ring[(1 - h) * HALF_CAP] : &s_ring[c + 1]);
     }
     apply_clock();
@@ -334,6 +370,8 @@ int subsample_steps() { return s_nsub; }
 int ext_samples() { return s_ext; }
 uint32_t frames() { return s_written[0] > s_written[1] ? s_written[0] : s_written[1]; }
 uint32_t max_write_us() { return s_max_write_us; }
+uint32_t dma_restarts() { return s_dma_restarts; }
+const char *dma_restart_note() { return s_restart_note; }
 
 void hold(bool on) { s_hold = on; }
 uint32_t frame_in_half(int h) { return s_written[h & 1]; }

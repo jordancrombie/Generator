@@ -28,6 +28,8 @@ int      subsample_steps();   // fractional positions per 2-sample step
 int      ext_samples();       // how far a line may be lengthened
 uint32_t frames();            // frames written since the test started
 uint32_t max_write_us();      // worst time to rewrite half the ring
+uint32_t dma_restarts();      // times the frame watchdog restarted a stopped DMA
+const char *dma_restart_note();  // test and uptime of the last restart ("" if none)
 
 // Placement of absolute line n under the current test.
 struct LinePlan { int32_t e; uint8_t v; float shift_ns; };

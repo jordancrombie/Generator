@@ -67,6 +67,17 @@ so runs are now deleted after their report unless `--keep` is given.
   in the per-sample loop made a frame rewrite take 27 ms of a 33 ms budget.
   With float copies plus visiting only nearby segments, it takes 6–9 ms.
 
+- **Open issue: the I2S DMA occasionally stops.** Seen as the frame counter
+  freezing, with `diag` showing the same descriptor every time. It happens
+  about once per full `verify_timing.py` run, always on the switch from S8
+  (variable-length frames) to S9, after the freeze/dump/unfreeze and two
+  rebuilds that the verifier does. 48 plain test switches (including S8→S9)
+  did not reproduce it. Mitigations: the APLL is only retuned when its rate
+  changes; a frame watchdog restarts the DMA after 200 ms without an
+  end-of-frame interrupt and counts it (`dma_restarts` and
+  `dma_restart_last` in `info`); and runs flag any restart during a
+  capture.
+
 ## Analog signal
 
 - **The ESP32 DAC can push its output up but barely pull it down.** Into an
@@ -80,10 +91,14 @@ so runs are now deleted after their report unless `--keep` is given.
 - **A back-terminated TBC output into an open line reads about 1.9×**
   (540 mV of sync instead of 286 mV).
 
-## The TBC under test
+## AVT-8710
 
 - **It blanks lines 10–21** (the vertical interval). That is why the frame
   marker lives on picture lines 24 and 287.
+- **With no V-sync at all (S4 rung 6)** it still outputs standard fields in
+  order, but the picture sits far lower: the marker at line 201–209 after its
+  V-sync instead of 15, landing somewhere different each time it locks. That is why the marker decoder searches the
+  whole field and reports the marker's line.
 - **Its output is always standard:** 262.5 lines per field and 0.4–0.6 ns
   rms line jitter, whatever the input does.
 
@@ -96,6 +111,13 @@ so runs are now deleted after their report unless `--keep` is given.
   −30 IRE), or the burst trough reads as sync.
 - **Blanking level:** measure it on the back porch (8.2–9.1 µs after sync).
   A histogram of the whole line picks the wrong level.
+- **False markers in snow:** S9's snow, scanned at 241 offsets on every line,
+  occasionally passes the marker's 4-bit CRC (it once produced a "frame
+  31410"). Only markers naming the run's own test code and rung are accepted;
+  rejects are counted as `spurious_rejected`.
+- **Vertical-interval lines have no burst:** a check that measures burst
+  phase must skip them. S8's varying line counts move them to unexpected
+  slot positions; that gave a false 180° error.
 - **Picture displacement:** compare lines of one type against their median
   (template correlation). Edge-finding across mixed line types gives
   nonsense (530 ns "spread" on a clean signal).

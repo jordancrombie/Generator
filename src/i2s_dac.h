@@ -14,6 +14,9 @@ double set_sample_rate(double sample_hz);
 // descriptor with eof = 1 finishes playing.
 void on_eof(void (*cb)(uint32_t desc_addr));
 
+// Restart the DMA at `ring` (recovery if it ever stops).
+void restart(lldesc_t *ring);
+
 // Diagnostics: current DMA descriptor address; force a constant DAC code
 // (code < 0 returns the DAC to the DMA stream).
 uint32_t current_descriptor();

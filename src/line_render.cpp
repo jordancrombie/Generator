@@ -55,7 +55,7 @@ int place_segments(const Segment *raw, int n, Half a, Half b, ActiveSeg *out, in
 }
 
 void render_line(uint16_t *out, int n, Half a, Half b, int phase_off, float origin, float carrier_shift,
-                 const ActiveSeg *segs, int nseg, const Levels &lv, bool no_hsync) {
+                 const ActiveSeg *segs, int nseg, const Levels &lv, uint8_t mods) {
     // Timing constants are double; the ESP32 emulates double math in
     // software, so take float copies before the per-sample loop.
     const float H = HALF_LINE;
@@ -79,10 +79,23 @@ void render_line(uint16_t *out, int n, Half a, Half b, int phase_off, float orig
             Half kind = h ? b : a;
             float o = h * H;
             switch (kind) {
-                case H_EQ:     low += pulse(t, o, o + eq_w, sync_e); break;
-                case H_VS:     low += pulse(t, o, o + vs_w, sync_e); break;
+                case H_EQ:
+                    if (!(mods & MOD_EQ_AS_HSYNC)) low += pulse(t, o, o + eq_w, sync_e);
+                    else if (h == 0) low += pulse(t, 0, hs_w, sync_e);
+                    break;
+                case H_VS:
+                    if (mods & MOD_VS_AS_EQ) {
+                        low += pulse(t, o, o + eq_w, sync_e);
+                    } else if (mods & MOD_VS_UNSERRATED) {
+                        // Low for the whole half; adjacent unserrated halves join up.
+                        float start = (h == 0 && (mods & MOD_LOW_START)) ? -origin - 4 : o;
+                        low += pulse(t, start, o + H, sync_e);
+                    } else {
+                        low += pulse(t, o, o + vs_w, sync_e);
+                    }
+                    break;
                 case H_BLANK:
-                case H_ACTIVE: if (h == 0 && !no_hsync) low += pulse(t, 0, hs_w, sync_e); break;
+                case H_ACTIVE: if (h == 0 && !(mods & MOD_NO_HSYNC)) low += pulse(t, 0, hs_w, sync_e); break;
             }
         }
         ire += (sync_ire - blank_ire) * low;
@@ -114,6 +127,18 @@ void render_line(uint16_t *out, int n, Half a, Half b, int phase_off, float orig
 
         float code = lv.sync_code + (ire - sync_ire) * scale;
         int c = (int)lroundf(code);
+        c = c < 0 ? 0 : (c > 255 ? 255 : c);
+        out[i2s_dac::index(k)] = i2s_dac::sample((uint8_t)c);
+    }
+}
+
+void render_noise(uint16_t *out, int n, uint32_t seed, const Levels &lv) {
+    const float scale = (lv.white_code - lv.sync_code) / (float)(IRE_WHITE - IRE_SYNC);
+    for (int k = 0; k < n; k++) {
+        uint32_t x = seed * 0x9E3779B9u + (uint32_t)k * 0x85EBCA6Bu;  // lowbias32-style mix
+        x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+        float ire = -15.0f + 115.0f * (float)(x & 0xFFFF) / 65535.0f;
+        int c = (int)lroundf(lv.sync_code + (ire - (float)IRE_SYNC) * scale);
         c = c < 0 ? 0 : (c > 255 ? 255 : c);
         out[i2s_dac::index(k)] = i2s_dac::sample((uint8_t)c);
     }

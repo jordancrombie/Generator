@@ -48,7 +48,72 @@ def shift_ns(test, n):
 
 
 HALF_SAMPLES = 456  # a lone half-line, rounded to the DAC's sample pairs
-SLOT_HALF, SLOT_NOSYNC = 1, 2
+SLOT_HALF, SLOT_ALT, SLOT_NOISE = 1, 2, 4
+NOISE_VARIANTS = 4
+FRAME_HZ = FH_HZ / LINES_PER_FRAME
+
+# Render modifiers for SLOT_ALT lines (src/line_render.h)
+MOD_NO_HSYNC, MOD_EQ_AS_HSYNC, MOD_VS_UNSERRATED, MOD_VS_AS_EQ = 1, 2, 4, 8
+
+
+def line_halves(L):
+    """(first half, second half) of NTSC line L: 'EQ', 'VS', 'BLANK' or 'ACTIVE'."""
+    if L <= 3: return "EQ", "EQ"
+    if L <= 6: return "VS", "VS"
+    if L <= 9: return "EQ", "EQ"
+    if L <= 20: return "BLANK", "BLANK"
+    if L <= 262: return "ACTIVE", "ACTIVE"
+    if L == 263: return "ACTIVE", "EQ"
+    if L <= 265: return "EQ", "EQ"
+    if L == 266: return "EQ", "VS"
+    if L <= 268: return "VS", "VS"
+    if L == 269: return "VS", "EQ"
+    if L <= 271: return "EQ", "EQ"
+    if L == 272: return "EQ", "BLANK"
+    if L <= 282: return "BLANK", "BLANK"
+    if L == 283: return "BLANK", "ACTIVE"
+    return "ACTIVE", "ACTIVE"
+
+
+def alt_mods(test, L):
+    """Render modifiers of line L's SLOT_ALT copy (0 = never altered)."""
+    tid, p = test["id"], test["params"]
+    if tid == "S3":
+        return MOD_NO_HSYNC if 100 <= L < 100 + int(p["lines"]) else 0
+    if tid != "S4":
+        return 0
+    h = line_halves(L)
+    eq, vs = "EQ" in h, "VS" in h
+    v = int(p["variant"])
+    if v == 1: return MOD_EQ_AS_HSYNC if eq else 0
+    if v == 2: return MOD_VS_UNSERRATED if vs else 0
+    if v == 3: return (MOD_EQ_AS_HSYNC if eq else 0) | (MOD_VS_UNSERRATED if vs else 0)
+    if v in (4, 5): return MOD_VS_AS_EQ if vs and L <= 9 else 0
+    if v == 6: return MOD_VS_AS_EQ if vs else 0
+    return 0
+
+
+def lround(x):
+    return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
+
+
+def wow_lines(test, frame):
+    """S8: lines added (>0) or removed (<0) per field in this frame."""
+    p = test["params"]
+    return lround(p["peak_lines"] * math.sin(2 * math.pi * p["hz"] * frame / FRAME_HZ))
+
+
+def noise_variant(frame, slot):
+    return (frame * 7 + slot) % NOISE_VARIANTS
+
+
+def noise_ire(variant, k):
+    """IRE of sample k of snow rendering `variant` (src/line_render.cpp render_noise)."""
+    x = ((variant + 1) * 0x9E3779B9 + k * 0x85EBCA6B) & M32
+    x ^= x >> 16; x = (x * 0x7FEB352D) & M32
+    x ^= x >> 15; x = (x * 0x846CA68B) & M32
+    x ^= x >> 16
+    return -15.0 + 115.0 * (x & 0xFFFF) / 65535.0
 
 
 def frame_slots(test, frame):
@@ -60,8 +125,9 @@ def frame_slots(test, frame):
         every = int(p["every_frames"])
         if frame % every == every - 1:  # field 1 only, ending half-way along line 263
             return [(L, 0) for L in range(1, 263)] + [(263, SLOT_HALF)]
-    if tid == "S6":
-        d, out = int(p["delta_lines"]), []
+    if tid in ("S6", "S8"):
+        d = int(p["delta_lines"]) if tid == "S6" else wow_lines(test, frame)
+        out = []
         for L in range(1, LINES_PER_FRAME + 1):
             if d < 0 and (200 <= L < 200 - d or 462 <= L < 462 - d):
                 continue
@@ -69,9 +135,16 @@ def frame_slots(test, frame):
             if d > 0 and L in (200, 462):
                 out += [(L, 0)] * d
         return out
+    if tid == "S9":  # a band of snow moving down 23 lines a frame through lines 30..229 (+263)
+        top, h = 30 + (frame * 23) % 200, int(p["lines"])
+        return [(L, SLOT_NOISE if top <= L < top + h or top + 263 <= L < top + 263 + h else 0)
+                for L in range(1, LINES_PER_FRAME + 1)]
+    if tid == "S4":
+        v = int(p["variant"])
+        active = frame % 30 == 0 if v == 4 else frame % 6 == 0 if v == 5 else True
+        return [(L, SLOT_ALT if active and alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
     if tid == "S3":
-        k = int(p["lines"])
-        return [(L, SLOT_NOSYNC if 100 <= L < 100 + k else 0) for L in range(1, LINES_PER_FRAME + 1)]
+        return [(L, SLOT_ALT if alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
     return [(L, 0) for L in range(1, LINES_PER_FRAME + 1)]
 
 

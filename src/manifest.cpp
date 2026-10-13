@@ -1,5 +1,7 @@
 #include "manifest.h"
 
+#include <string.h>
+
 #include "marker.h"
 #include "ntsc_gen.h"
 #include "ntsc_timing.h"
@@ -41,8 +43,17 @@ void print_manifest(Print &o) {
     bool any = false;
     if (*t.def->p1_name) { o.printf("\"%s\":%g", t.def->p1_name, t.p1); any = true; }
     if (*t.def->p2_name) o.printf("%s\"%s\":%g", any ? "," : "", t.def->p2_name, t.p2);
-    o.printf("},\"seed\":%u,\"model\":\"perturb/1\",\"chroma\":\"%s\"},", (unsigned)t.seed,
+    o.printf("},\"seed\":%u,\"model\":\"perturb/1\",\"chroma\":\"%s\",\"targets\":[", (unsigned)t.seed,
              gen::chroma_follows() ? "follows_timing" : "colour_under");
+    // "line,frame" -> ["line_tbc","frame_tbc"]
+    const char *p = t.def->targets;
+    for (bool first = true; *p; first = false) {
+        const char *e = strchr(p, ',');
+        int n = e ? (int)(e - p) : (int)strlen(p);
+        o.printf("%s\"%.*s_tbc\"", first ? "" : ",", n, p);
+        p += n + (e ? 1 : 0);
+    }
+    o.print("]},");
     o.printf("\"timing\":{\"samples_per_line\":%d,\"lines_per_frame\":%d,\"half_line_samples\":%d,"
              "\"loop\":\"none (frame counter)\",\"time_origin\":\"50%% of H-sync leading edge\","
              "\"structure\":\"perturb/1 frame_slots\"},",
@@ -52,5 +63,6 @@ void print_manifest(Print &o) {
              marker::LINE_F1, marker::LINE_F2, marker::CELLS, marker::CELL_US, marker::START_US, marker::LO_IRE,
              marker::HI_IRE);
     print_pattern(o);
-    o.print(",\"ideal\":{\"timing\":\"nominal\",\"pattern\":\"unperturbed\"}}\n");
+    o.printf(",\"ideal\":{\"pattern\":\"unperturbed\",\"line_tbc\":\"%s\",\"frame_tbc\":\"%s\"}}\n",
+             t.def->ideal_line, t.def->ideal_frame);
 }
