@@ -30,7 +30,11 @@ TESTS = [("V0", 1, 1, "under", 0), ("H1", 4, 7, "under", 0), ("H1", 6, 3, "under
          ("C1", 3, 1, "under", 0), ("C1", 4, 1, "under", 0), ("C2", 1, 1, "under", 0), ("C3", 4, 5, "under", 0),
          ("C4", 4, 1, "under", 0), ("F2", 7, 1, "under", 0), ("F2", 8, 1, "under", 1), ("F3", 3, 1, "under", 0),
          ("L1", 5, 3, "under", 0), ("L2", 4, 1, "under", 0), ("L3", 4, 1, "under", 0), ("L4", 1, 1, "under", 0),
-         ("L4", 4, 1, "under", 0)]
+         ("L4", 4, 1, "under", 0),
+         # (..., start frame): begin just before a loss or stress window
+         ("V1", 1, 1, "under", 0, 0), ("S10", 11, 1, "under", 0, 26), ("S11", 11, 1, "under", 0, 26),
+         ("X1", 2, 1, "under", 0, 35), ("X1", 2, 1, "under", 1, 35), ("X1", 3, 1, "under", 0, 35),
+         ("X1", 5, 1, "under", 0, 35)]
 
 # S4: expected sync pulses (start us, width us) on a vertical-interval line, by variant,
 # when the frame alters it; "low" = low for the whole line (unserrated, continuing).
@@ -164,11 +168,12 @@ def main():
     g.cmd("hold 0", until="frames")  # in case an earlier run stopped while frozen
     ok_all = True
     only = [a.upper() for a in sys.argv[1:]]  # e.g. verify_timing.py S8 S9
-    for tid, rung, seed, mode, half in TESTS:
+    for tid, rung, seed, mode, half, *rest in TESTS:
+        start = rest[0] if rest else 0
         if only and tid not in only:
             continue
         assert g.cmd(f"chroma {mode}").strip().endswith("ok"), mode
-        assert g.cmd(f"test {tid} {rung} {seed}").strip().endswith("ok"), tid
+        assert g.cmd(f"test {tid} {rung} {seed} {start}").strip().endswith("ok"), tid
         time.sleep(0.2)  # let a few frames go by after the rebuild
         fr = g.cmd("hold 1", until="frames").split("frames")[1].split()
         frame = int(fr[half])
@@ -214,6 +219,8 @@ def main():
             if slots[i][1] & pm.SLOT_NOISE:  # snow: no sync or burst to check
                 continue
             if pm.line_halves(slots[i][0])[0] not in ("BLANK", "ACTIVE"):  # VBI line: no H sync or burst
+                continue
+            if slots[i][1] & pm.SLOT_DEAD:  # no signal: nothing to check here (checked below)
                 continue
             c = g.dump(HALF_BASE * half + i)
             e, v = plan[i]
@@ -263,6 +270,21 @@ def main():
             ok_c, note_c = content_check(g, tid, test, man, slots, plan, cum, half, frame, ire, tip_code, blank_code)
             struct_ok &= ok_c
             struct_note += note_c
+        # Lost lines: no signal must be DAC code 0 throughout; snow must match the model.
+        dead = [i for i, (_, f) in enumerate(slots) if f & pm.SLOT_DEAD]
+        if dead:
+            c = g.dump(HALF_BASE * half + dead[len(dead) // 2])
+            struct_ok &= bool(np.all(c == 0))
+            struct_note += f" {len(dead)} no-signal lines (max code {int(c.max())});"
+        if tid in ("S11", "X1"):
+            snow = [i for i, (_, f) in enumerate(slots) if f & pm.SLOT_NOISE]
+            if snow:
+                i = snow[0]
+                c = g.dump(HALF_BASE * half + i)
+                want = np.array([pm.noise_ire(pm.noise_variant(frame, i), k) for k in range(len(c))])
+                err = np.max(np.abs(ire(c) - want))
+                struct_ok &= err < 1.5
+                struct_note += f" {len(snow)} snow lines (vs model {err:.2f} IRE);"
         if tid == "S9":
             bar = [i for i, (_, f) in enumerate(slots) if f & pm.SLOT_NOISE]
             i = bar[0]
@@ -274,10 +296,11 @@ def main():
             struct_note += f" snow line {slots[i][0]} vs model: max err {err:.2f} IRE, bar {len(bar)} lines;"
 
         # 4. frame markers (every slot showing a marker line)
-        marks = []
-        for i, (L, _) in enumerate(slots):
-            if L not in man["marker"]["lines"]:
+        marks, marker_slots = [], 0
+        for i, (L, f) in enumerate(slots):
+            if L not in man["marker"]["lines"] or f & (pm.SLOT_DEAD | pm.SLOT_NOISE):  # lost lines carry no marker
                 continue
+            marker_slots += 1
             c = g.dump(HALF_BASE * half + i)
             st = sync_pos(c, blank_code, tip_code) if timing else ORIGIN  # noise/hum upset sync detection
             lo, hi = lv["sync_code"] + 47.5 * (lv["white_code"] - lv["sync_code"]) / 140, \
@@ -293,7 +316,7 @@ def main():
             and (len(pos_err) == 0 or np.max(np.abs(pos_err)) < (0.3 if tid == "S2" else 0.15)) \
             and ph_max < 4 and nosync_ok \
             and struct_ok \
-            and order_ok and marks and all(m == (int(man["test"]["code"]), rung, frame & 0xFFFF) for m in marks)
+            and order_ok and (marks or marker_slots == 0) and all(m == (int(man["test"]["code"]), rung, frame & 0xFFFF) for m in marks)
         ok_all &= good
         if not good and ph_max >= 4:
             print("   burst phase error by slot:", {i: round(float(p_), 1) for i, p_ in zip(checked, ph_err)})

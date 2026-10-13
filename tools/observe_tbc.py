@@ -99,6 +99,167 @@ def picture_metrics(x, hs, fs, tip, blank):
             "gray_noise_ire_rms": float(np.median(a[:, 5]))}
 
 
+# ---- Per-field classification -----------------------------------------------
+LO, HI = 7.5, 70.0   # marker cell levels, IRE
+
+
+def classify_fields(x, fs, hs, vs, marks, tip, blank, lp, line):
+    """One record per complete output field: parity, length, class, frame, ghost."""
+    us = fs / 1e6
+    ire = lambda v: (v - blank) * 40.0 / (blank - tip)
+    cell_t = (10.5 + 1.4 * (np.arange(36) + 0.5)) * us
+    by_field = {}
+    for m in marks:
+        by_field.setdefault(m[4], []).append(m)
+    mline = int(np.median([m[3] for m in marks])) if marks else 15
+    moff = float(np.median([m[2] for m in marks])) * us if marks else 0.0
+
+    def cells_at(s, off):
+        pos = (s + cell_t + off).astype(int)
+        if pos.max() >= len(lp):
+            return None
+        return (ire(lp[pos]) - LO) / (HI - LO)       # 0 = low cell, 1 = high cell
+
+    def mid_cells(c):
+        return int(np.sum((c[2:34] > 0.25) & (c[2:34] < 0.75)))
+
+    # Reference picture: the median luma profile of our own (marked) fields at
+    # a few heights. An unmarked field is "ours, unmarked" only if it matches;
+    # anything else with picture in it is foreign (e.g. the TBC's own bars).
+    QS = (0.3, 0.5, 0.7)
+    prof_t = np.arange(12, 60, 1.0) * us
+
+    def profile(field, q):
+        k = int(q * len(field))
+        return ire(lp[(field[k] + prof_t).astype(int)]) if k < len(field) else None
+
+    refs = {q: [] for q in QS}
+    for fi in by_field:
+        if fi + 1 < len(vs):
+            fld = hs[(hs > vs[fi]) & (hs < vs[fi + 1])]
+            for q in QS:
+                p_ = profile(fld, q)
+                if p_ is not None and int(p_.max()) < 200:
+                    refs[q].append(p_)
+    ref = {q: np.median(v, axis=0) for q, v in refs.items() if v}
+
+    log = []
+    for fi in range(len(vs) - 1):
+        v0, v1 = vs[fi], vs[fi + 1]
+        field = hs[(hs > v0) & (hs < v1)]
+        before = hs[hs < v0]
+        frac = ((v0 - before[-1]) / line) % 1.0 if len(before) else 0.0
+        rec = {"i": fi, "parity": 1 if (frac < 0.25 or frac > 0.75) else 2,
+               "lines": round(float((v1 - v0) / line) * 2) / 2, "class": "", "frame": None, "ghost": False}
+        rec["standard"] = rec["lines"] == 262.5
+        if fi in by_field:
+            m = by_field[fi][0]
+            rec["class"], rec["frame"] = "ours", int(m[1][2])
+            c = cells_at(field[m[3] - 1], m[2] * us) if m[3] - 1 < len(field) else None
+            rec["ghost"] = bool(c is not None and mid_cells(c) >= 3)
+        else:
+            c = cells_at(field[mline - 1], moff) if mline - 1 < len(field) else None
+            if c is not None and c[0] > 0.6 and c[1] < 0.4 and mid_cells(c) >= 3:
+                rec["class"], rec["ghost"] = "blend", True    # our marker, two frames mixed
+            else:
+                kinds, others = [], []
+                for q in QS:
+                    p_ = profile(field, q)
+                    if p_ is None:
+                        continue
+                    if p_.std() < 3 and -5 < p_.mean() < 15:
+                        kinds.append("blank")
+                    elif q in ref and np.sqrt(np.mean((p_ - ref[q]) ** 2)) < 8:
+                        kinds.append("ours")
+                    else:
+                        kinds.append("other")
+                        others.append(p_)
+                if "other" in kinds or not kinds:
+                    # Not our picture. A TBC's own fallback pattern (e.g. the
+                    # AVT-8710's bars) is the same at every height; a garbled
+                    # field (seen while a TBC re-acquires) is not.
+                    same = len(others) >= 2 and all(np.sqrt(np.mean((a - others[0]) ** 2)) < 5 for a in others[1:])
+                    rec["class"] = "fallback" if same and len(others) == len(kinds) else "garbled"
+                else:
+                    rec["class"] = "unmarked" if "ours" in kinds else "blank"
+        log.append(rec)
+    return log, mline
+
+
+def summarize_fields(log):
+    """Counts by class, and frames whose two fields disagree (a stuck or torn field)."""
+    counts = Counter(f["class"] for f in log)
+    mismatches = []
+    for a, b in zip(log, log[1:]):   # an output frame: a parity-1 field then a parity-2 field
+        if a["parity"] == 1 and b["parity"] == 2 and a["class"] == b["class"] == "ours" and a["frame"] != b["frame"]:
+            mismatches.append((a["frame"], b["frame"]))
+    return {"ours": counts.get("ours", 0), "unmarked": counts.get("unmarked", 0),
+            "blend": counts.get("blend", 0), "blank": counts.get("blank", 0),
+            "fallback": counts.get("fallback", 0), "garbled": counts.get("garbled", 0),
+            "ghost": sum(f["ghost"] for f in log),
+            "nonstandard": sum(not f["standard"] for f in log), "field_mismatches": mismatches}
+
+
+def loss_summary(test, log):
+    """S10/S11: did the TBC ride through N lost fields? Needs a gap inside the capture."""
+    n = int(test["params"]["fields"])
+    lost_frames = {gf // 2 for gf in range(0, 4000) if gf % pm.LOSS_PERIOD < n}
+    seen = [f["frame"] for f in log if f["class"] == "ours"]
+    covered = bool(seen) and any(min(seen) < lf < max(seen) for lf in lost_frames)
+    s = summarize_fields(log)
+    # Handled = output kept standard fields and never fell back to its own
+    # pattern. Clean = handled, and nothing but our picture (held) or black.
+    held = frame_events(seen)["repeats"]
+    handled = covered and s["fallback"] == 0 and s["nonstandard"] == 0
+    clean = handled and s["garbled"] == 0 and s["blend"] == 0
+    how = ("fell back to its own pattern" if s["fallback"] else "lost sync" if s["nonstandard"] else
+           "garbled on recovery" if s["garbled"] else "blanked" if s["blank"] else
+           "held last frame" if held else "passed")
+    return {"fields_lost": n, "gap_captured": covered, "handled": handled, "clean": clean, "how": how,
+            "blank_fields": s["blank"], "fallback_fields": s["fallback"], "garbled_fields": s["garbled"],
+            "blended_fields": s["blend"], "unmarked_fields": s["unmarked"], "nonstandard_fields": s["nonstandard"],
+            "stuck_or_torn": len(s["field_mismatches"])}
+
+
+def hunt_summary(log):
+    """X1: anomalies before, during and after each stress burst (by input frame).
+
+    A field without our marker belongs to the stress window if either
+    neighbouring marked field does (losses only happen under stress); the
+    first frames after stress are 'settling' (the TBC's frame store lags)."""
+    W = lambda fr: pm.hunt_window(fr, settle=True)
+    marked = [(k, f["frame"]) for k, f in enumerate(log) if f["class"] == "ours"]
+    win = {}
+    for k, f in enumerate(log):
+        if f["class"] == "ours":
+            w = W(f["frame"])
+        else:
+            prev = next((W(fr) for j, fr in reversed(marked) if j < k), None)
+            nxt = next((W(fr) for j, fr in marked if j > k), None)
+            w = "stress" if "stress" in (prev, nxt) else prev or nxt or "before"
+        d = win.setdefault(w, {"fields": 0, "not_ours": 0, "ghost": 0, "mismatch": 0, "back": 0, "repeat": 0})
+        d["fields"] += 1
+        d["not_ours"] += f["class"] not in ("ours", "unmarked")
+        d["ghost"] += f["ghost"]
+    ours = [f for f in log if f["class"] == "ours"]
+    for a, b in zip(ours, ours[1:]):
+        d = win.get(W(b["frame"]))
+        if d is None:
+            continue
+        if b["frame"] < a["frame"]:
+            d["back"] += 1
+        elif b["frame"] == a["frame"] and not (a["parity"] == 1 and b["parity"] == 2):
+            d["repeat"] += 1          # same frame again, not as its own second field
+    for a, b in zip(log, log[1:]):
+        if a["parity"] == 1 and b["parity"] == 2 and a["class"] == b["class"] == "ours" and a["frame"] != b["frame"]:
+            win[W(b["frame"])]["mismatch"] += 1
+    bad = lambda d: d["not_ours"] + d["ghost"] + d["mismatch"] + d["back"] + d["repeat"]
+    after = win.get("after")
+    return {"windows": win,
+            "after_clean": None if after is None else bad(after) == 0,
+            "stuck_or_ghost": sum(d["mismatch"] + d["ghost"] for d in win.values())}
+
+
 def excerpt(x, hs, us, start_line, n_bins=220):
     """Min/max envelope of one line (2 us before sync to 64 us after) for plotting.
 
@@ -173,11 +334,28 @@ def analyze(run, ch=1):
                 for j in order[cand[order]]:
                     d = pm.decode_marker(bits[j])
                     if d and d[:2] == want:
-                        marks.append((float(s / fs), d, float(shifts[j] / us), line_no))
+                        marks.append((float(s / fs), d, float(shifts[j] / us), line_no, fi))
                         break
                     if d:
                         spurious += 1
-    out["picture"] = picture_metrics(x, hs, fs, tip, blank) if len(hs) > 100 else None
+    # Whose picture is each output field: ours (our marker), blended, blank,
+    # or foreign (a picture without our marker, e.g. the TBC's own fallback
+    # bars)? Only our own fields feed the picture measurements, so a TBC that
+    # gives up and shows its own bars can never pass as our signal.
+    if len(hs) > 100:
+        fl, mlines = classify_fields(x, fs, hs, vs, marks, tip, blank, lp, line)
+        out["field_log"] = fl
+        out["field_summary"] = summarize_fields(fl)
+        ours = {f["i"] for f in fl if f["class"] == "ours" and not f["ghost"]}
+        fidx = np.searchsorted(vs, hs) - 1
+        out["picture"] = picture_metrics(x, hs[np.isin(fidx, list(ours))], fs, tip, blank) if ours else None
+        tid = man["test"]["id"]
+        if tid in ("S10", "S11"):
+            out["loss"] = loss_summary(man["test"], fl)
+        if tid == "X1":
+            out["hunt"] = hunt_summary(fl)
+    else:
+        out["field_log"], out["field_summary"], out["picture"] = [], None, None
     frames = [int(m[1][2]) for m in marks]
     offs = [m[2] for m in marks]
     lines = [m[3] for m in marks]
@@ -214,6 +392,25 @@ def print_report(r):
               f"(±{pc['yellow_hue_jitter_deg']:.1f}), yellow chroma {pc['yellow_chroma_pp_ire']:.1f} IRE p-p, "
               f"gray {pc['gray_ire']:.1f} IRE, blanking wander {pc['blanking_wander_ire']:.2f} IRE rms, "
               f"noise {pc['gray_noise_ire_rms']:.2f} IRE rms")
+    fs_ = r.get("field_summary")
+    if fs_:
+        print(f"  output fields: {fs_['ours']} ours, {fs_['unmarked']} ours unmarked, {fs_['blend']} blended, "
+              f"{fs_['blank']} blank, {fs_['garbled']} garbled, {fs_['fallback']} TBC's own pattern, {fs_['ghost']} ghosted, "
+              f"{len(fs_['field_mismatches'])} frames with mismatched fields")
+    if r.get("loss"):
+        L = r["loss"]
+        verdict = ("no gap in capture" if not L["gap_captured"] else
+                   f"{'clean' if L['clean'] else 'handled' if L['handled'] else 'NOT handled'} ({L['how']})")
+        print(f"  lost {L['fields_lost']} field(s): {verdict} (blank {L['blank_fields']}, garbled {L['garbled_fields']}, "
+              f"own pattern {L['fallback_fields']}, non-standard {L['nonstandard_fields']}, stuck/torn {L['stuck_or_torn']})")
+    if r.get("hunt"):
+        H = r["hunt"]
+        for w in ("before", "stress", "settling", "after"):
+            d = H["windows"].get(w)
+            if d:
+                print(f"  {w:8s}: {d['fields']} fields, not ours {d['not_ours']}, ghosted {d['ghost']}, "
+                      f"stuck/torn {d['mismatch']}, back {d['back']}, repeated {d['repeat']}")
+        print(f"  after stress: {'clean' if H['after_clean'] else 'NOT clean' if H['after_clean'] is False else 'not captured'}")
     m = r["markers"]
     if not m["decoded"]:
         print("  markers: none decoded")

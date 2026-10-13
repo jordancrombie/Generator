@@ -39,7 +39,7 @@ static void print_help() {
     Serial.println("  levels <sync> <white>    DAC codes for -40 and 100 IRE");
     Serial.println("  ppm <x>                  trim sample clock in ppm");
     Serial.println("  tests                    list the test catalog and ladders");
-    Serial.println("  test <id> [rung] [seed]  run a test (test V0 = clean baseline)");
+    Serial.println("  test <id> [rung] [seed] [start_frame]  run a test (test V0 = clean baseline)");
     Serial.println("  chroma [under|follows]   colour-under (VHS/Betamax, default) or direct colour");
     Serial.println("  manifest                 print the current run's manifest (JSON)");
     Serial.println("  pdump <frame> [line] [n] planned shift per line (ns target, e, v, ns actual)");
@@ -111,10 +111,10 @@ static void handle(String line) {
     } else if (cmd == "test") {
         char id[8] = {0};
         int rung = 1;
-        unsigned seed = 1;
-        int n = sscanf(arg.c_str(), "%7s %d %u", id, &rung, &seed);
+        unsigned seed = 1, start = 0;
+        int n = sscanf(arg.c_str(), "%7s %d %u %u", id, &rung, &seed, &start);
         perturb::Test t;
-        ok(n >= 1 && perturb::make(id, rung, seed, &t) && gen::set_test(t));
+        ok(n >= 1 && perturb::make(id, rung, seed, &t) && gen::set_test(t, start));
     } else if (cmd == "hold") {
         gen::hold(arg.toInt() != 0);
         delay(100);  // let an in-progress rewrite finish

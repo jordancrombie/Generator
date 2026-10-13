@@ -46,9 +46,35 @@ def cycle(test, n):
 LINE_NS = 1e9 / FH_HZ
 
 
+HUNT_CYCLE, HUNT_STRESS_START, HUNT_STRESS_END = 90, 30, 60   # X1: clean, stress, clean (frames)
+LOSS_PERIOD = 60                                                # S10/S11: fields per loss cycle
+
+
+HUNT_SETTLE = 3   # frames after a stress burst a TBC may still show its effects (frame-store delay)
+
+
+def hunt_window(frame, settle=False):
+    """X1: 'before', 'stress' or 'after' for an input frame number; with settle=True
+    the first HUNT_SETTLE frames after stress are 'settling'."""
+    ph = frame % HUNT_CYCLE
+    if ph < HUNT_STRESS_START:
+        return "before"
+    if ph < HUNT_STRESS_END:
+        return "stress"
+    return "settling" if settle and ph < HUNT_STRESS_END + HUNT_SETTLE else "after"
+
+
 def shift_ns(test, n):
     """Target sync shift of absolute line n, ns. `test` is the manifest's test dict."""
     tid, p = test["id"], test["params"]
+    if tid == "X1":  # stress types 1, 4, 5 jitter; 5 adds a 5 us head-switch skew
+        if hunt_window(n // LINES_PER_FRAME) != "stress":
+            return 0.0
+        s, L = int(p["stress"]), n % LINES_PER_FRAME + 1
+        ns = 200.0 * gauss(test["seed"], n) if s == 1 else 100.0 * gauss(test["seed"], n) if s in (4, 5) else 0.0
+        if s == 5 and not (257 <= L < 520):
+            ns += 5000.0
+        return ns
     if tid == "H1":
         return p["rms_ns"] * gauss(test["seed"], n)
     if tid == "H2":
@@ -70,7 +96,7 @@ def shift_ns(test, n):
 
 
 HALF_SAMPLES = 456  # a lone half-line, rounded to the DAC's sample pairs
-SLOT_HALF, SLOT_ALT, SLOT_NOISE, SLOT_DROPOUT = 1, 2, 4, 8
+SLOT_HALF, SLOT_ALT, SLOT_NOISE, SLOT_DROPOUT, SLOT_DEAD = 1, 2, 4, 8, 64
 NOISE_VARIANTS = 4
 DROPOUT_VARIANTS = 4
 DROPOUT_POS = (0.15, 0.35, 0.55, 0.75)        # dropout start, fraction of the active width
@@ -252,6 +278,23 @@ def frame_slots(test, frame):
         return [(L, SLOT_ALT if active and alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
     if tid == "S3":
         return [(L, SLOT_ALT if alt_mods(test, L) else 0) for L in range(1, LINES_PER_FRAME + 1)]
+    if tid in ("S10", "S11", "V1"):  # lost fields: field 1 = lines 1..263, field 2 = 264..525
+        lost = SLOT_NOISE if tid == "S11" else SLOT_DEAD
+        n = 10 ** 9 if tid == "V1" else int(p["fields"])
+        return [(L, lost if (2 * frame + (L >= 264)) % LOSS_PERIOD < n else 0) for L in range(1, LINES_PER_FRAME + 1)]
+    if tid == "X1":
+        s, stress = int(p["stress"]), hunt_window(frame) == "stress"
+        if s == 2 and stress and frame & 1:  # field 1 only, ending half-way along line 263
+            return [(L, 0) for L in range(1, 263)] + [(263, SLOT_HALF)]
+        top, h, out = 30 + (frame * 23) % 200, 40 if s == 4 else 20, []
+        for L in range(1, LINES_PER_FRAME + 1):
+            f, field = 0, 2 * frame + (L >= 264)
+            if stress and s == 3 and field % 20 < 3: f = SLOT_DEAD
+            if stress and s == 5 and field % 30 < 2: f = SLOT_DEAD
+            if stress and s in (4, 5) and not f and (top <= L < top + h or top + 263 <= L < top + 263 + h):
+                f = SLOT_NOISE
+            out.append((L, f))
+        return out
     if tid == "L1":
         d = dropout_lines(test, frame)
         return [(L, SLOT_DROPOUT | (d[L] << 4) if L in d else 0) for L in range(1, LINES_PER_FRAME + 1)]

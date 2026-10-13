@@ -28,6 +28,10 @@ from observe_tbc import report
 
 RUNS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runs")
 
+# Tests whose events recur slowly need longer captures (rate, seconds):
+# S10/S11 lose fields once a second, X1's stress-recovery cycle is 3 s.
+CAPTURE_HINTS = {"S10": (25e6, 1.3), "S11": (25e6, 1.3), "X1": (12.5e6, 3.3)}
+
 
 def add_common_args(ap):
     """Options shared by run_test.py and run_suite.py."""
@@ -60,8 +64,13 @@ def ask_json(s, cmd, until, tries=3):
                 raise RuntimeError(f"no valid JSON from '{cmd}' after {tries} tries: {reply[:200]!r}")
 
 
-def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None):
-    """Start a test rung, wait `settle` s for the TBC to lock, capture, save. Returns the run dir."""
+def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None, timebase=None):
+    """Start a test rung, wait `settle` s for the TBC to lock, capture, save. Returns the run dir.
+
+    `timebase` (rate, seconds) is the capture for ordinary tests; tests in
+    CAPTURE_HINTS use their own."""
+    if timebase:
+        scope.set_timebase(*CAPTURE_HINTS.get(test.upper(), timebase))
     reply = request(s, f"test {test} {rung} {seed}", until="\n", timeout=5)
     if "ok" not in reply:
         raise RuntimeError(f"generator refused 'test {test} {rung}': {reply.strip()}")
@@ -133,7 +142,7 @@ def main():
 
     with dwf_scope.Scope(a.rate, a.seconds) as scope:  # starts settling while the test starts
         s = open_gen()
-        run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out, dut)
+        run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out, dut, (a.rate, a.seconds))
     for ch in (0, 1):
         v = dwf_scope.volts(cap, ch)
         print(f"ch{ch + 1}: {v.min():.3f} .. {v.max():.3f} V")

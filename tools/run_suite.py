@@ -33,6 +33,35 @@ def rungs_of(spec, catalog):
     return out
 
 
+def loss_tolerance(results, tid, key="handled"):
+    """Largest N such that every S10/S11 rung up to N fields was `key` ('handled': no
+    fallback or sync loss; 'clean': also no glitches). 'inf (>10)' beyond 10."""
+    runs = sorted((r for r in results if r and r["test"]["id"] == tid and r.get("loss")),
+                  key=lambda r: r["loss"]["fields_lost"])
+    if not runs:
+        return None
+    best = 0
+    for r in runs:
+        L = r["loss"]
+        if not L["gap_captured"]:
+            continue
+        if not L[key]:
+            break
+        best = L["fields_lost"]
+    return "inf (>10)" if best > 10 else best
+
+
+def tolerance_lines(results):
+    out = []
+    for tid, what in (("S10", "no signal"), ("S11", "snow")):
+        t = loss_tolerance(results, tid)
+        if t is not None:
+            c = loss_tolerance(results, tid, "clean")
+            out.append(f"lost fields ({what}): rides through up to {t} in a row without falling back to its "
+                       f"own pattern or losing sync; cleanly (no garbled fields) up to {c}")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("specs", nargs="*")
@@ -47,19 +76,21 @@ def main():
         catalog = {}
         for line in request(s, "tests").splitlines():
             f = line.split()
-            if f and ":" in line and len(f[0]) == 2 and f[0][1].isdigit():
-                catalog[f[0]] = len(line.split(":", 1)[1].split())
+            if f and ":" in line and f[0][0].isalpha() and f[0][1:].isdigit():
+                catalog[f[0]] = len(line.rsplit(":", 1)[1].split())  # the ladder follows the last colon
         plan = [r for spec in (a.specs or SMOKE) for r in rungs_of(spec, catalog)]
         size = f", keeping about {4 * a.rate * a.seconds * len(plan) / 1e9:.1f} GB of captures" if a.keep else ""
         print(f"{len(plan)} runs{size}")
         results = []
         for i, (test, rung) in enumerate(plan, 1):
             t = time.time()
-            run, _ = run_one(s, scope, test, rung, a.seed, a.settle, a.out, dut)
+            run, _ = run_one(s, scope, test, rung, a.seed, a.settle, a.out, dut, (a.rate, a.seconds))
             print(f"[{i}/{len(plan)}] {test} r{rung}: {time.time() - t:.1f} s")
             results.append(finish(run, a.keep))
         request(s, "test V0", until="\n")
     print(f"done in {time.time() - t0:.1f} s")
+    for line in tolerance_lines(results):
+        print(line)
     write_html(results, a.html)
 
 
