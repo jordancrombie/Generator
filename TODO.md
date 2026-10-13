@@ -37,6 +37,16 @@ order. Measured facts and open issues live in
       regenerate sync inflates them. Measure absolute volts once CH1 is
       terminated, and report output sync depth.
 
+## Housekeeping
+- [ ] **Regenerate the sample report** (`docs/sample-report.html` and its
+      screenshot `docs/sample-report.jpg`) whenever tests are added or
+      changed, or the report layout changes. Use the command in the README's
+      "Sample report" section, with any new tests added to its list. Copy
+      the new file from `reports/` to `docs/sample-report.html`, then
+      re-render the screenshot:
+      `qlmanage -t -s 1400 -o /tmp docs/sample-report.html` and
+      `sips -s format jpeg -s formatOptions 80 /tmp/sample-report.html.png --out docs/sample-report.jpg`.
+
 ## Generator
 - [ ] Root-cause the intermittent DMA stop (watchdog recovers it; see
       bench notes).

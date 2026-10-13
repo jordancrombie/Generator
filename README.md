@@ -173,6 +173,23 @@ scale + offset). A run whose report fails is always kept. Kept runs are
 large, 100 MB per 0.5 s at 50 MS/s, and `runs/` is not committed. Where the time goes is broken down in
 [docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
+## Sample report
+
+[docs/sample-report.html](docs/sample-report.html) is a full `--html` report:
+56 runs on a warmed-up green AVT-8710, covering one rung of every test, every
+rung of S10/S11, all five X1 stresses and V1. GitHub shows HTML files as
+source, so download it and open it in a browser. The page is self-contained.
+
+[![Top of the sample report: fault-test findings and the summary table](docs/sample-report.jpg)](docs/sample-report.html)
+
+It was made with:
+
+```
+python3 tools/run_suite.py V0:1 H1:4 H2:3 H3:5 H4:5 H5:4 F1:3 F2:5 F3:2 S1:5 S2:3 S3:5 S4:3 S4:6 S5:1 \
+    S6:5 S6:6 S7:4 S8:5 S9:4 C1:3 C2:1 C3:3 C4:3 L1:4 L2:3 L3:3 L4:4 S10:all S11:all X1:all V1:1 \
+    --dut "AVT-8710 (green)" --note "..." --seconds 0.4 --html
+```
+
 ## Fault tests and the fallback guard
 
 Every output field is classified by what it carried:
