@@ -54,16 +54,40 @@ int place_segments(const Segment *raw, int n, Half a, Half b, ActiveSeg *out, in
     return m;
 }
 
+static uint32_t mix32(uint32_t x) {  // lowbias32
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+    return x;
+}
+
+float noise_sample(uint32_t seed, int k) {
+    uint32_t s = 0;
+    for (uint32_t i = 0; i < 4; i++) s += mix32(seed * 0x9E3779B9u + 4u * (uint32_t)k + i) & 0xFFFF;
+    return ((float)s - 4 * 32767.5f) / (65536.0f * 0.57735027f);
+}
+
+float snow_ire(uint32_t seed, int k) {
+    uint32_t x = mix32(seed * 0x9E3779B9u + (uint32_t)k * 0x85EBCA6Bu);
+    return -15.0f + 115.0f * (float)(x & 0xFFFF) / 65535.0f;
+}
+
+static inline uint16_t code_of(float ire, const Levels &lv) {
+    const float scale = (lv.white_code - lv.sync_code) / (float)(IRE_WHITE - IRE_SYNC);
+    int c = (int)lroundf(lv.sync_code + (ire - (float)IRE_SYNC) * scale);
+    c = c < 0 ? 0 : (c > 255 ? 255 : c);
+    return i2s_dac::sample((uint8_t)c);
+}
+
 void render_line(uint16_t *out, int n, Half a, Half b, int phase_off, float origin, float carrier_shift,
-                 const ActiveSeg *segs, int nseg, const Levels &lv, uint8_t mods) {
+                 const ActiveSeg *segs, int nseg, const Levels &lv, const Style &st) {
+    const uint8_t mods = st.mods;
     // Timing constants are double; the ESP32 emulates double math in
     // software, so take float copies before the per-sample loop.
     const float H = HALF_LINE;
-    const float eq_w = EQ_WIDTH, vs_w = H - (float)SERRATION_WIDTH, hs_w = HSYNC_WIDTH, sync_e = SYNC_EDGE;
+    const float eq_w = EQ_WIDTH, vs_w = H - (float)SERRATION_WIDTH, hs_w = HSYNC_WIDTH, sync_e = st.sync_edge;
     const float b0 = BURST_START, b1 = (float)(BURST_START + BURST_CYCLES * 4), burst_e = BURST_EDGE;
-    const float luma_e = LUMA_EDGE, chroma_e = CHROMA_EDGE, burst_a = BURST_AMPL;
-    const float sync_ire = IRE_SYNC, blank_ire = IRE_BLANK;
-    const float scale = (lv.white_code - lv.sync_code) / (float)(IRE_WHITE - IRE_SYNC);
+    const float luma_e = LUMA_EDGE, chroma_e = CHROMA_EDGE, burst_a = st.burst_amp;
+    const float sync_ire = st.sync_ire, blank_ire = IRE_BLANK, gain = st.video_gain;
+    const float rot = st.chroma_rot_deg * (float)M_PI / 180.0f, crot = cosf(rot), srot = sinf(rot);
     static const int SIN4[4] = {0, 1, 0, -1}, COS4[4] = {1, 0, -1, 0};
     const float phi = (float)M_PI_2 * carrier_shift;
     const float cphi = cosf(phi), sphi = sinf(phi);
@@ -117,31 +141,27 @@ void render_line(uint16_t *out, int n, Half a, Half b, int phase_off, float orig
             if (wl > 0) {
                 float f = (t - s.s0) / (s.s1 - s.s0);
                 f = f < 0 ? 0 : (f > 1 ? 1 : f);
-                ire += wl * (s.y0 + (s.y1 - s.y0) * f);
+                ire += gain * wl * (s.y0 + (s.y1 - s.y0) * f);
             }
             if (s.u != 0 || s.v != 0) {
                 float wc = pulse(t, s.s0, s.s1, chroma_e);
-                ire += wc * (s.u * sn + s.v * cs);
+                float u = s.u * crot - s.v * srot, v = s.u * srot + s.v * crot;  // hue offset
+                ire += gain * wc * (u * sn + v * cs);
             }
         }
 
-        float code = lv.sync_code + (ire - sync_ire) * scale;
-        int c = (int)lroundf(code);
-        c = c < 0 ? 0 : (c > 255 ? 255 : c);
-        out[i2s_dac::index(k)] = i2s_dac::sample((uint8_t)c);
+        ire += st.dc_ire;
+        if (st.noise_rms_ire > 0) ire += st.noise_rms_ire * noise_sample(st.noise_seed, k);
+        out[i2s_dac::index(k)] = code_of(ire, lv);
     }
 }
 
 void render_noise(uint16_t *out, int n, uint32_t seed, const Levels &lv) {
-    const float scale = (lv.white_code - lv.sync_code) / (float)(IRE_WHITE - IRE_SYNC);
-    for (int k = 0; k < n; k++) {
-        uint32_t x = seed * 0x9E3779B9u + (uint32_t)k * 0x85EBCA6Bu;  // lowbias32-style mix
-        x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
-        float ire = -15.0f + 115.0f * (float)(x & 0xFFFF) / 65535.0f;
-        int c = (int)lroundf(lv.sync_code + (ire - (float)IRE_SYNC) * scale);
-        c = c < 0 ? 0 : (c > 255 ? 255 : c);
-        out[i2s_dac::index(k)] = i2s_dac::sample((uint8_t)c);
-    }
+    for (int k = 0; k < n; k++) out[i2s_dac::index(k)] = code_of(snow_ire(seed, k), lv);
+}
+
+void overlay_snow(uint16_t *out, int k0, int k1, uint32_t seed, const Levels &lv) {
+    for (int k = k0; k < k1; k++) out[i2s_dac::index(k)] = code_of(snow_ire(seed, k), lv);
 }
 
 }  // namespace render

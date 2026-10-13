@@ -66,6 +66,13 @@ so runs are now deleted after their report unless `--keep` is given.
 - **Double-precision math is software-emulated.** A stray `double` constant
   in the per-sample loop made a frame rewrite take 27 ms of a 33 ms budget.
   With float copies plus visiting only nearby segments, it takes 6–9 ms.
+  Per-line `fmod`, `sin` or division in double cost as much again (L3 hit
+  28.8 ms). Periodic tests now use a 32-bit integer phase (`n × phase_inc`,
+  wrapping at 2³²) with float trig. That is exact and reproducible in Python,
+  and every test rewrites in under 10 ms.
+- **Ties in quantization:** F2's shifts land exactly on half-steps
+  (910 samples × ppm × 10⁻⁶), where float rounding in C and Python disagree.
+  F2 is quantized in exact 64-bit integer arithmetic instead.
 
 - **Open issue: the I2S DMA occasionally stops.** Seen as the frame counter
   freezing, with `diag` showing the same descriptor every time. It happens
@@ -85,6 +92,16 @@ so runs are now deleted after their report unless `--keep` is given.
   capacitance: the burst became a sawtooth and chroma came out about 4×
   too small, while luma (slow) looked fine. Every coax run needs exactly one
   75 Ω termination at its far end (see `docs/wiring.svg`).
+- **Sync sits at DAC code 0, so nothing can go below it.** Noise on the
+  sync tip (L2) is half clipped, and S1 can't make sync *deeper* than 40 IRE.
+  When levels are calibrated, leave headroom below the sync tip (e.g. sync
+  at code ~15–20).
+- **The DAC's quantization floor** is about 1.9 IRE per code (direct drive),
+  or 0.55 IRE rms of quantization noise: roughly 45 dB SNR. Below that, L2
+  measures the DAC, not the test.
+- **Line buffers place sync 16 samples in** (`LINE_ORIGIN`). With 4, S2's
+  slowest edge (1000 ns, about 24 samples wide) started before the buffer
+  did, giving a jump halfway down the edge instead of a slow edge.
 - **Unloaded DAC output** is about 12.9 mV per code (0–3.3 V). Measured
   open-circuit: blanking 283 mV (code 21), white 911 mV (code 73). With a
   75 Ω series resistor into a 75 Ω termination, expect about half.

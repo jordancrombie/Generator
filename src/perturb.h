@@ -8,6 +8,7 @@
 // mirrors this file.
 
 #include <stdint.h>
+#include "line_render.h"
 
 namespace perturb {
 
@@ -26,7 +27,24 @@ enum Kind : uint8_t {
     FIELD_DROP,      // S7: p1 = every N frames, field 2 is dropped
     FIELD_WOW,       // S8: p1 = peak lines added/removed per field, p2 = Hz
     NOISE_BAR,       // S9: p1 = height of a moving band of snow, lines per field
+    SYNC_DEPTH,      // S1: p1 = sync depth, IRE (40 nominal)
+    SYNC_EDGE,       // S2: p1 = sync edge 10-90% rise, ns
+    BURST_LEVEL,     // C1: p1 = burst peak-to-peak, IRE (40 nominal)
+    NO_BURST,        // C2: burst removed
+    PHASE_JITTER,    // C3: p1 = rms degrees of burst + chroma phase, line to line
+    HUE_OFFSET,      // C4: p1 = degrees picture chroma is rotated against burst
+    FH_UNLOCKED,     // F2: p1 = ppm of H rate against a fixed subcarrier
+    FREQ_DRIFT,      // F3: p1 = peak ppm of H-rate drift, p2 = period s
+    DROPOUTS,        // L1: p1 = dropout length us, p2 = dropouts per field
+    NOISE,           // L2: p1 = SNR dB (unweighted, 100 IRE / rms)
+    HUM,             // L3: p1 = 60 Hz hum, IRE peak-to-peak
+    VIDEO_LEVEL,     // L4: p1 = picture level, % of nominal
 };
+
+// What a line's pre-rendered copies (the `v` index) differ in. Timing tests
+// use them for sub-sample shifts; C3, L2 and L3 instead need a few versions of
+// each line that differ in carrier phase, noise or DC level.
+enum VariantMode : uint8_t { VM_TIMING, VM_CARRIER, VM_NOISE, VM_DC };
 
 // S4 variants (p1):
 //   1 equalising pulses replaced by plain H sync     4 V-sync missing in field 1 every 30 frames
@@ -37,7 +55,10 @@ enum Kind : uint8_t {
 // One played line of the output stream: content of NTSC line `line`
 // (1..525), possibly only its first half (456 samples), rendered with the
 // test's alternate sync structure (alt_mods), or replaced by a line of snow.
-enum SlotFlags : uint8_t { SLOT_HALF = 1, SLOT_ALT = 2, SLOT_NOISE = 4 };
+// SLOT_DROPOUT lines carry a dropout; bits 4-5 of the flags pick which of
+// DROPOUT_VARIANTS (segment positions) it is.
+enum SlotFlags : uint8_t { SLOT_HALF = 1, SLOT_ALT = 2, SLOT_NOISE = 4, SLOT_DROPOUT = 8 };
+constexpr int DROPOUT_VARIANTS = 4;
 struct Slot { uint16_t line; uint8_t flags; };
 constexpr int HALF_SAMPLES = 456;  // 455 rounded to the DAC's sample pairs
 constexpr int NOISE_VARIANTS = 4;  // snow lines cycle through this many renderings
@@ -63,12 +84,22 @@ struct Test {
     int rung;        // 1-based
     float p1, p2;
     uint32_t seed;
+    // Periodic tests (H2, F3, L3): the phase of line n is the low 32 bits of
+    // n * phase_inc, as a fraction of a cycle. Exact integer arithmetic, so
+    // the grader reproduces it bit for bit and the ESP32 avoids software
+    // double math. phase_inc = round(2^32 * f / fH).
+    uint32_t phase_inc;
 };
 
 const Def *find(const char *id);
 bool make(const char *id, int rung, uint32_t seed, Test *out);
 
-float shift_ns(const Test &t, uint32_t n);
+// Sync shift of line n, ns. Double: F2/F3 accumulate shifts of many ms.
+double shift_ns(const Test &t, uint32_t n);
+// F2 only: the line's quantized shift in steps of 2/nsub samples, computed in
+// exact integer arithmetic (its shifts land exactly on half-steps, where
+// float rounding would differ between implementations).
+int32_t fh_unlocked_steps(const Test &t, uint32_t n, int nsub);
 // Largest increase in sync position from one line to the next, in samples.
 float max_delta_samples(const Test &t);
 float clock_ppm(const Test &t);
@@ -83,6 +114,16 @@ uint32_t frame_start_mod4(const Test &t, uint32_t frame);
 uint8_t alt_mods(const Test &t, int line);
 // Which snow rendering a SLOT_NOISE slot uses.
 inline int noise_variant(uint32_t frame, int slot) { return (int)((frame * 7 + (uint32_t)slot) % NOISE_VARIANTS); }
+
+// Static rendering style for the whole test (S1, S2, C1, C2, C4, L2, L4).
+render::Style base_style(const Test &t);
+VariantMode variant_mode(const Test &t);
+// Which copy (0..nsub-1) line n uses, for the non-timing variant modes.
+int line_variant(const Test &t, uint32_t n, int nsub);
+// What copy v carries: carrier phase (deg), DC level (IRE) or noise seed.
+float variant_value(const Test &t, int v, int nsub);
+// L1: samples [k0, k1) after the sync point covered by dropout variant `var`.
+void dropout_span(const Test &t, int var, float *k0, float *k1);
 
 uint32_t hash32(uint32_t x);
 

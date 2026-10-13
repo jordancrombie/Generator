@@ -17,8 +17,9 @@ import dwf_scope
 from gen_cmd import open_gen, request
 from run_test import add_common_args, dut_of, finish, run_one, write_html
 
-SMOKE = ["V0:1", "H1:4", "H2:3", "H3:5", "H4:5", "H5:4", "F1:3", "S3:5", "S4:3", "S4:6", "S5:1", "S6:5", "S6:6",
-         "S7:4", "S8:5", "S9:4"]
+SMOKE = ["V0:1", "H1:4", "H2:3", "H3:5", "H4:5", "H5:4", "F1:3", "F2:5", "F3:2",
+         "S1:5", "S2:3", "S3:5", "S4:3", "S4:6", "S5:1", "S6:5", "S6:6", "S7:4", "S8:5", "S9:4",
+         "C1:3", "C2:1", "C3:3", "C4:3", "L1:4", "L2:3", "L3:3", "L4:4"]
 
 
 def rungs_of(spec, catalog):

@@ -190,6 +190,15 @@ def waveform(ex):
     return "".join(g)
 
 
+def picture_cells(r):
+    pc = r.get("picture")
+    if not pc:
+        return '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+    return (f'<td class="num">{pc["burst_pp_ire"]:.0f} IRE</td>'
+            f'<td class="num">{pc["yellow_hue_deg"]:.1f}° ±{pc["yellow_hue_jitter_deg"]:.1f}</td>'
+            f'<td class="num">{pc["gray_ire"]:.1f} IRE</td>')
+
+
 def tile(k, v, u=""):
     return f'<div class="tile"><div class="k">{esc(k)}</div><div class="v">{esc(v)} <span class="u">{esc(u)}</span></div></div>'
 
@@ -207,6 +216,16 @@ def run_card(r, idx, base=None):
         tile("Marker line after V-sync", f"{m['line_after_vsync']['median']:.0f}" if m.get("line_after_vsync") else "—",
              f"({m['line_after_vsync']['min']}–{m['line_after_vsync']['max']})" if m.get("line_after_vsync") else ""),
     ]
+    pc = r.get("picture")
+    if pc:
+        tiles += [
+            tile("Burst", f"{pc['burst_pp_ire']:.1f}", "IRE p-p (40)"),
+            tile("Yellow hue", f"{pc['yellow_hue_deg']:.1f}", f"° ±{pc['yellow_hue_jitter_deg']:.1f} (167.1)"),
+            tile("Yellow chroma", f"{pc['yellow_chroma_pp_ire']:.1f}", "IRE p-p (62)"),
+            tile("Gray bar", f"{pc['gray_ire']:.1f}", "IRE (76.9)"),
+            tile("Blanking wander", f"{pc['blanking_wander_ire']:.2f}", "IRE rms"),
+            tile("Noise on gray", f"{pc['gray_noise_ire_rms']:.2f}", "IRE rms"),
+        ]
     frames = m["frames"]
     seq = (f'<h3 style="font-size:14px;margin:14px 0 6px">Frame sequence on the output</h3>{frame_strip(frames)}'
            f'<p class="cap">Each cell is one field\'s frame marker. A clean output shows every frame twice, in order.</p>'
@@ -254,7 +273,7 @@ def write(results, path=None, title="TBC test report"):
             f'<td>{esc(params_text(t))}</td><td>{esc(targets_text(t))}</td><td>{fields_badge(r)}</td>'
             f'<td class="num">{jitter}</td>'
             f'<td>{sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)}</td>'
-            f'<td class="num">{r["markers"]["decoded"]}</td></tr>')
+            f'{picture_cells(r)}<td class="num">{r["markers"]["decoded"]}</td></tr>')
     notes = f'<p class="note">{esc(dut["notes"])}</p>' if dut.get("notes") else ""
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -276,7 +295,7 @@ TBC of each class would output for that test.</p>
 <h2>Summary</h2>
 <div class="scroll"><table>
 <thead><tr><th>Test</th><th>Rung</th><th>Parameters</th><th>Aimed at</th><th>Output fields</th><th>H jitter</th>
-<th>Frame sequence</th><th>Markers</th></tr></thead>
+<th>Frame sequence</th><th>Burst</th><th>Hue</th><th>Gray</th><th>Markers</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
 <h2>Runs</h2>
 {''.join(run_card(r, i, base) for i, r in enumerate(results))}
