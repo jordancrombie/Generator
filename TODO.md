@@ -29,9 +29,10 @@ order. Measured facts and open issues live in
       gray bar reads higher (84 / 95 IRE vs 79 at 20 / 40 IRE p-p hum).
 - [ ] C2: no colour killer (passes chroma with a random hue when burst is
       missing). Confirm on the monitor.
-- [ ] H4 (10 µs head-switch skew): timing fully corrected, but output hue
-      wanders ±18.7° line to line (±1° elsewhere). Look at chroma phase
-      across the head switch.
+- [ ] H4 (10 µs head-switch skew): output hue wanders ±19° line to line on
+      **both** the AVT-8710 and the TBC-1000, so it's probably inherent to
+      colour-under timing jumps, not a fault. Confirm, then document it as
+      expected.
 - [ ] S1 (10 IRE sync): the gray bar reads 106.8 IRE. Picture figures are
       scaled by the output's own sync depth, so a TBC that doesn't fully
       regenerate sync inflates them. Measure absolute volts once CH1 is
@@ -46,6 +47,15 @@ order. Measured facts and open issues live in
       re-render the screenshot:
       `qlmanage -t -s 1400 -o /tmp docs/sample-report.html` and
       `sips -s format jpeg -s formatOptions 80 /tmp/sample-report.html.png --out docs/sample-report.jpg`.
+
+## Datavideo TBC-1000
+- [x] **Output dropout:** built `tools/dropout_watch.py` (2026-10-13).
+- [ ] Run longer watches with different stimuli (S10:1–11, S11, X1 stresses)
+      to pin down the trigger and the rate; run the same watch on the
+      AVT-8710 for comparison.
+- [ ] Re-run its suite once the chain is terminated, ideally after a check
+      that the output is alive before each test. Today's tolerances varied
+      between runs (8 vs 11).
 
 ## Generator
 - [ ] Root-cause the intermittent DMA stop (watchdog recovers it; see

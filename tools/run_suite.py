@@ -34,6 +34,8 @@ def rungs_of(spec, catalog):
 
 
 def loss_tolerance(results, tid, key="handled"):
+    # Runs where the TBC output was dead say nothing about tolerance: skip them.
+    results = [r for r in results if r and not r.get("dead")]
     """Largest N such that every S10/S11 rung up to N fields was `key` ('handled': no
     fallback or sync loss; 'clean': also no glitches). 'inf (>10)' beyond 10."""
     runs = sorted((r for r in results if r and r["test"]["id"] == tid and r.get("loss")),
@@ -91,6 +93,9 @@ def main():
     print(f"done in {time.time() - t0:.1f} s")
     for line in tolerance_lines(results):
         print(line)
+    dead = [f"{r['test']['id']} r{r['test']['rung']}" for r in results if r and r.get("dead")]
+    if dead:
+        print(f"WARNING: TBC output was dead (no video sync) during {len(dead)} run(s): {', '.join(dead)}")
     write_html(results, a.html)
 
 

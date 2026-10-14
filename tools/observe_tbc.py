@@ -115,10 +115,16 @@ def classify_fields(x, fs, hs, vs, marks, tip, blank, lp, line):
     moff = float(np.median([m[2] for m in marks])) * us if marks else 0.0
 
     def cells_at(s, off):
+        """Marker cells scaled 0 (low) .. 1 (high) by this field's own framing
+        cells (start "10", stop "01"), so a TBC's gain doesn't matter."""
         pos = (s + cell_t + off).astype(int)
         if pos.max() >= len(lp):
             return None
-        return (ire(lp[pos]) - LO) / (HI - LO)       # 0 = low cell, 1 = high cell
+        c = ire(lp[pos])
+        hi, lo = (c[0] + c[35]) / 2, (c[1] + c[34]) / 2
+        if hi - lo < 15:                              # no marker-like swing here
+            return None
+        return (c - lo) / (hi - lo)
 
     def mid_cells(c):
         return int(np.sum((c[2:34] > 0.25) & (c[2:34] < 0.75)))
@@ -301,6 +307,9 @@ def analyze(run, ch=1):
     fields = np.round(np.diff(vs) / line * 2) / 2
     out["fields"] = {"count": int(len(vs)), "lengths": {f"{k:g}": int(v) for k, v in Counter(fields.tolist()).items()},
                      "all_standard": bool(len(fields) > 0 and np.all(fields == 262.5))}
+    # No vertical sync at all: the TBC isn't outputting video (seen on a
+    # Datavideo TBC-1000, which went dead for about a minute after input losses).
+    out["dead"] = len(vs) < 2
 
     # Frame markers: search every line of each output field, trying cell
     # offsets of +-12 us, so a marker is found wherever the TBC put it. Its
@@ -380,6 +389,8 @@ def print_report(r):
     t = r["test"]
     dut = r["dut"].get("name") or "unspecified"
     print(f"{t['id']} r{t['rung']} {t['params']} ({t.get('chroma', '')}), DUT {dut}, CH{r['channel']}, {r['seconds']:.3f} s")
+    if r.get("dead"):
+        print("  OUTPUT DEAD: no video sync on the channel (the TBC isn't outputting video)")
     h = r["h"]
     if h["period_ns"] is not None:
         print(f"  H sync: {h['pulses']} pulses, period {h['period_ns']:.2f} ns, jitter {h['jitter_ns_rms']:.2f} ns rms, "

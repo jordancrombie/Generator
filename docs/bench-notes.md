@@ -136,6 +136,30 @@ so runs are now deleted after their report unless `--keep` is given.
 - **Its output is always standard:** 262.5 lines per field and 0.4–0.6 ns
   rms line jitter, whatever the input does.
 
+## Datavideo TBC-1000
+
+- **Its output intermittently goes dead for about a minute.** No sync at all,
+  only ~40 mV of energy near 3.58 MHz on CH1, then it recovers on its own.
+  Seen twice on 2026-10-13, both times starting during an input-loss test
+  (X1 stress 3, lost fields; S11 rung 2, snow). It's flagged as "output dead"
+  in reports.
+- **Dropout watch, 5 minutes** (60 s clean / 180 s S11:2 / 60 s clean):
+  one dead sample, 134 s into the stimulus, alive again a second later.
+  It's genuine: 0 syncs and under 0.2 V of swing for the whole 50 ms
+  window, which two fields of snow can't produce. No dropouts on clean
+  input. So the dropouts vary from under a second to about a minute, and
+  have only been seen during input loss.
+- **No proc amp.** Its output runs about 30 % below the AVT-8710's: gray
+  bar 56 IRE (AVT 79), burst 38 (43), yellow chroma 58 (70).
+- **Lost fields** vary between runs: rode through up to 8 (then its own
+  pattern at 9, lost sync at 10–11) in one run, and all 11 with one odd
+  261-line field in another. With no input at all it outputs black (V1)
+  rather than bars.
+- **Colour:** kills colour when burst is missing (C2), unlike the AVT-8710.
+  Partial ACC for a weak burst (×1.6). Clamps hum cleanly.
+- **Ghost detection** first flagged every field because of the lower output
+  level. Marker cells are now judged against each field's own framing cells.
+
 ## Measurement pitfalls
 
 - **Sync slicing:** with full-size chroma, red and blue bars (down to
