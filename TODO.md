@@ -50,10 +50,13 @@ order. Measured facts and open issues live in
 
 ## Datavideo TBC-1000
 - [x] **Output dropout:** built `tools/dropout_watch.py` (2026-10-13).
-- [ ] Output sags then dies (see bench notes). Check: does a power-cycle
-      clear a long episode; is the unit hot; is the supply rail sagging?
-      Run a long clean V0 watch with the unit warm (the clean control was
-      only 4 minutes). Add a "swing trend" warning to `dropout_watch.py`.
+- [ ] Output sags then dies (see bench notes). A power-cycle cleared it,
+      and 10 suites after that (45 minutes) stayed clean. Next: a long
+      S4:6 / S11:2 watch (an hour or more, unit warm) to see if it comes
+      back with no test switches; check the supply rail and the unit's
+      temperature if it does. Suites now record the output sync depth
+      (`level` in the JSON; shown by `compare_suites.py`). Add a
+      "swing trend" warning to `dropout_watch.py`.
 - [ ] Run longer watches with different stimuli (S10:1–11, S11, X1 stresses)
       to pin down the trigger and the rate; run the same watch on the
       AVT-8710 for comparison.

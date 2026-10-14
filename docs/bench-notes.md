@@ -171,6 +171,16 @@ so runs are now deleted after their report unless `--keep` is given.
     supply browning out (heat or capacitors?) rather than a sync-logic
     lock-up. So far it has only started while the input is disturbed or
     soon after.
+- **After a power-cycle (with the parking fix): 10 suites, 45 minutes, no
+  dead output** (`reports/20261013-2228*` to `2308*`, comparison
+  `20261013-230832_compare10_*`). Output sync depth held at 0.42–0.43 V
+  throughout, with no sag. Lost-field tolerance was ∞ / ∞ for 8 suites. In
+  suites 9 and 10, one snow run each lost sync for a field (S11 r1 and
+  r6), so the snow tolerance read 0 and 5. These look like one-off
+  glitches, not a dying output. So the long episode before this cleared
+  with a power-cycle and didn't come back in 45 minutes. Either the
+  test-switch artifact was a trigger, or the fault needs a longer warm or
+  stressed run to appear.
 - **No proc amp.** Its output runs about 30 % below the AVT-8710's: gray
   bar 56 IRE (AVT 79), burst 38 (43), yellow chroma 58 (70).
 - **Lost fields** vary between runs: rode through up to 8 (then its own

@@ -311,6 +311,12 @@ def analyze(run, ch=1):
     # No vertical sync at all: the TBC isn't outputting video (seen on a
     # Datavideo TBC-1000, which went dead for about a minute after input losses).
     out["dead"] = len(vs) < 2
+    # Output level in volts, to spot the swing sagging before the output dies.
+    out["level"] = {"ptp_v": float(np.ptp(x)), "sync_depth_v": None}
+    if len(hs) > 100:
+        tips = [x[int(s + 1.5 * us):int(s + 3.5 * us)].mean() for s in hs[:2000]]
+        porch = [x[int(s + 8.2 * us):int(s + 9.1 * us)].mean() for s in hs[:2000]]
+        out["level"]["sync_depth_v"] = float(np.median(porch) - np.median(tips))
 
     # Frame markers: search every line of each output field, trying cell
     # offsets of +-12 us, so a marker is found wherever the TBC put it. Its
