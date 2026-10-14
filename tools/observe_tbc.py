@@ -3,7 +3,9 @@
 usage: observe_tbc.py RUN_DIR [RUN_DIR ...] [--ch 1|2] [--html [PATH]]
 
 Reports output H stability, field lengths (in lines) and the frame-marker
-sequence decoded from the video. This is an observation tool, not the
+sequence decoded from the video. When the run also captured CH2 (the
+generator's output, teed off before the TBC), the CH1 report adds an input
+check, the TBC's latency, and its gain against the real input. This is an observation tool, not the
 grader: it does not score anything. analyze() returns the same results as
 data (used by run_test.py, run_suite.py and html_report.py).
 """
@@ -13,6 +15,10 @@ from collections import Counter
 import numpy as np
 
 import perturb_model as pm
+
+
+def has_channel(run, ch):
+    return f"ch{ch}" in np.load(os.path.join(run, "capture.npz")).files
 
 
 def load(run, ch):
@@ -78,7 +84,9 @@ def picture_metrics(x, hs, fs, tip, blank):
             continue
         g_y, _ = demod(s, *bar(0))
         b_y, _ = demod(s, *bar(6))
-        if not (g_y > 55 and b_y < 30 and g_y > b_y + 30):   # top colour-bar rows: gray high, blue low
+        # Top colour-bar rows: gray high, blue low. Relative, so a TBC with low
+        # gain (the TBC-1000's gray sits near 56 IRE) still qualifies.
+        if not (g_y > 35 and b_y < 0.5 * g_y and g_y > b_y + 20):
             continue
         _, burst = demod(s, 5.8, 7.6)
         y_y, yel = demod(s, *bar(1))
@@ -156,7 +164,8 @@ def classify_fields(x, fs, hs, vs, marks, tip, blank, lp, line):
         before = hs[hs < v0]
         frac = ((v0 - before[-1]) / line) % 1.0 if len(before) else 0.0
         rec = {"i": fi, "parity": 1 if (frac < 0.25 or frac > 0.75) else 2,
-               "lines": round(float((v1 - v0) / line) * 2) / 2, "class": "", "frame": None, "ghost": False}
+               "lines": round(float((v1 - v0) / line) * 2) / 2, "class": "", "frame": None, "ghost": False,
+               "t_s": round(float(v0 / fs), 7)}
         rec["standard"] = rec["lines"] == 262.5
         if fi in by_field:
             m = by_field[fi][0]
@@ -445,10 +454,102 @@ def print_report(r):
     print(f"  sequence: {seq}{' ...' if len(m['frames']) > 40 else ''}")
 
 
+def compare_input(out, inp):
+    """What CH2 (the generator's output) says about a CH1 run: was the input
+    right, how late is the TBC's output, and what did it do to the levels."""
+    tid = out["test"]["id"]
+    res = {"present": not inp["dead"], "ok": True, "issues": [], "markers": inp["markers"]["decoded"],
+           "h_jitter_ns_rms": inp["h"]["jitter_ns_rms"], "fields": inp["fields"]["lengths"],
+           "level": inp["level"], "picture": inp["picture"]}
+    if tid == "V1":                     # no signal by design: CH2 should be dead
+        res["ok"] = inp["dead"]
+        if not inp["dead"]:
+            res["issues"].append("V1 should send no signal, but CH2 has video")
+        return res
+    if inp["dead"]:
+        res["ok"] = False
+        res["issues"].append("no video on CH2 (reference not connected, or the generator stopped)")
+        return res
+    ev = inp["markers"]["events"]
+    if not inp["markers"]["decoded"]:
+        res["issues"].append("no frame markers decoded on CH2")
+    if ev["backward_steps"] or ev["repeats"]:
+        res["issues"].append(f"generator frame sequence broken ({ev['backward_steps']} back, {ev['repeats']} repeated)")
+    if out.get("dma_restarts_during"):
+        res["issues"].append("generator DMA restarted during the capture")
+    res["ok"] = not res["issues"]
+
+    # Latency: the same field (frame and parity) found on both channels.
+    def starts(r):
+        d = {}
+        for f in r.get("field_log", []):
+            if f["class"] == "ours" and f["frame"] is not None:
+                d.setdefault((f["frame"], f["parity"]), f["t_s"])
+        return d
+    a, b = starts(out), starts(inp)
+    dl = np.array([a[k] - b[k] for k in a.keys() & b.keys()]) * 1e3
+    if len(dl):
+        med = float(np.median(dl))
+        res["latency"] = {"median_ms": med, "fields": med / pm.FIELD_MS, "matched": int(len(dl)),
+                          "steady": float(np.mean(np.abs(dl - med) < 0.05)),
+                          "min_ms": float(dl.min()), "max_ms": float(dl.max())}
+
+    # Gain against the real input rather than nominal levels: the generator's
+    # output (and its chroma roll-off) is whatever CH2 measured.
+    po, pi = out.get("picture"), inp.get("picture")
+    if po and pi:
+        ratio = lambda k: po[k] / pi[k] if pi[k] else None
+        res["vs_input"] = {"burst": ratio("burst_pp_ire"), "chroma": ratio("yellow_chroma_pp_ire"),
+                           "gray": ratio("gray_ire"), "hue_deg": po["yellow_hue_deg"] - pi["yellow_hue_deg"]}
+    # Output line rate against the input's: 0 if the TBC locks its output to the
+    # input; otherwise it free-runs (a frame synchroniser) and the latency
+    # slides, dropping or repeating a frame each time it wraps.
+    po_ns, pi_ns = out["h"]["period_ns"], inp["h"]["period_ns"]
+    if po_ns and pi_ns:
+        res["rate_ppm"] = (pi_ns / po_ns - 1) * 1e6
+    lo, li = out.get("level", {}).get("sync_depth_v"), inp["level"].get("sync_depth_v")
+    if lo and li:
+        res["sync_ratio"] = lo / li     # depends on how each run is terminated
+    return res
+
+
+def print_input(r):
+    i = r.get("input")
+    if i is None:
+        print("  input: CH2 not captured (single channel); picture figures are against nominal levels")
+        return
+    if not i["present"] and r["test"]["id"] != "V1":
+        print("  input (CH2): no video. Is the reference connected? (--channels 1 for a single-channel rig)")
+        return
+    state = "ok" if i["ok"] else "CHECK: " + "; ".join(i["issues"])
+    extra = ""
+    if i["present"]:
+        extra = f", {i['markers']} markers, H jitter {i['h_jitter_ns_rms']:.1f} ns rms" if i["h_jitter_ns_rms"] is not None else ""
+    print(f"  input (CH2): {state}{extra}")
+    L = i.get("latency")
+    rate = i.get("rate_ppm")
+    lock = (f"; output line rate {rate:+.1f} ppm vs input"
+            + (" (locked)" if abs(rate) < 2 else " (free-running: latency drifts)")) if rate is not None else ""
+    if L:
+        print(f"  latency: {L['median_ms']:.3f} ms ({L['fields']:.2f} fields), {L['matched']} fields matched, "
+              f"{100 * L['steady']:.0f} % within 0.05 ms{lock}")
+    v = i.get("vs_input")
+    if v:
+        f = lambda x: f"x{x:.2f}" if x is not None else "—"
+        print(f"  vs input: burst {f(v['burst'])}, yellow chroma {f(v['chroma'])}, gray {f(v['gray'])}, "
+              f"hue {v['hue_deg']:+.1f} deg")
+
+
 def report(run, ch=1):
-    """Analyze a run, print its report, and return the results."""
+    """Analyze a run, print its report, and return the results. A CH1 report
+    also analyzes CH2 when the run captured it (see compare_input)."""
     r = analyze(run, ch)
+    if ch == 1 and has_channel(run, 2):
+        inp = analyze(run, 2)
+        r["input"] = compare_input(r, inp)
     print_report(r)
+    if ch == 1:
+        print_input(r)
     return r
 
 

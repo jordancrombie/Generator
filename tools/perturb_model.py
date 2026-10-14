@@ -44,6 +44,7 @@ def cycle(test, n):
 
 
 LINE_NS = 1e9 / FH_HZ
+FIELD_MS = 262.5 * 1e3 / FH_HZ                                  # 16.683 ms
 
 
 HUNT_CYCLE, HUNT_STRESS_START, HUNT_STRESS_END = 90, 30, 60   # X1: clean, stress, clean (frames)

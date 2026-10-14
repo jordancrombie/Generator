@@ -4,16 +4,28 @@ Open work for the generator side of the TBC test rig, roughly in priority
 order. Measured facts and open issues live in
 [docs/bench-notes.md](docs/bench-notes.md).
 
-## Needs the BNC tees and 75 Ω terminator
-- [ ] Wire CH2 (generator output) and terminate CH1 (`docs/wiring.svg`).
-- [ ] Calibrate `levels` on CH2 to 286 mV sync / 714 mV white. Leave
-      headroom below the sync tip (sync at code ~15–20), so S1 can go deeper
-      than 40 IRE and L2 noise isn't clipped.
-- [ ] Measure the input side of every test on CH2 and check it against the
-      model (jitter actually injected, levels, burst, noise).
-- [ ] Latency in frames: the frame marker on CH2 vs CH1.
+## Rig calibration (CH2 is wired as of 2026-10-14)
+- [x] Wire CH2 (generator output, teed at the TBC input). Every two-channel
+      run now checks its input and measures latency, output rate vs input,
+      and gain vs input (2026-10-14).
+- [x] Latency: the frame marker on CH2 vs CH1.
+- [x] Single-channel option (`--channels 1`) for rigs without a tee or a
+      second scope channel.
+- [ ] Terminate CH1. Its sync reads 0.46 V against CH2's 0.23 V, which
+      suggests the end of the TBC's output run is still open.
+- [ ] Calibrate `levels` on CH2 to 286 mV sync / 714 mV white (now 226 mV
+      sync, 79 %). Leave headroom below the sync tip (sync at code ~15–20),
+      so S1 can go deeper than 40 IRE and L2 noise isn't clipped.
+- [ ] Generator chroma reads about 0.68× nominal on CH2 (burst 27 IRE p-p
+      instead of 40, yellow 44 instead of 62). Find out where: DAC hold
+      (sinc, 0.90 at fs/4), the DAC's output impedance into the cable, or
+      the measurement. Then pre-emphasise chroma in the renderer, so
+      single-channel rigs get a nominal input too.
+- [ ] Check each test's input on CH2 against the model across the whole
+      catalog (jitter actually injected, levels, burst, noise), not just the
+      smoke set.
 - [ ] F1: confirm on the scope that the sample clock really moves by the
-      commanded ppm.
+      commanded ppm (now measurable: CH2 line period).
 - [ ] Re-baseline V0 per device once the chain is terminated.
 
 ## AVT-8710

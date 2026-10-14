@@ -1,19 +1,20 @@
 """Run several test rungs on one scope session and report on each.
 
-usage: run_suite.py [SPEC ...] [--dut NAME] [--note TEXT] [--keep] [--html [PATH]]
-                    [--rate HZ] [--seconds S] [--settle S]
+usage: run_suite.py [SPEC ...] [--channels 1|2] [--dut NAME] [--note TEXT] [--keep]
+                    [--html [PATH]] [--rate HZ] [--seconds S] [--settle S]
 
 SPEC is TEST:RUNGS, e.g. H1:1-6, S7:4, H5:1,3,5 or H2:all.
 With no SPEC, runs the smoke set: one representative rung of every test.
 
 The scope settles once for the whole suite; each rung then costs the TBC
 lock time plus the capture. Each run is reported and then deleted, as in
-run_test.py; --keep keeps them (about 4 bytes x rate x seconds each, two
-int16 channels, so mind the disk with long suites).
+run_test.py; --keep keeps them (about 2 bytes x rate x seconds per channel
+each, so mind the disk with long suites). --channels is as in run_test.py.
 """
 import argparse, json, os, re, time
 
 import dwf_scope
+import perturb_model as pm
 from gen_cmd import open_gen, request
 from run_test import add_common_args, dut_of, finish, run_one, write_html
 
@@ -76,6 +77,26 @@ def tolerance_lines(results):
     return out
 
 
+def input_lines(results):
+    """Suite-level notes from CH2: rig faults, a missing reference, and the TBC's latency."""
+    out, withref = [], [r for r in results if r and r.get("input")]
+    if not withref:
+        return out
+    absent = [r for r in withref if not r["input"]["present"]]
+    if len(absent) == len(withref):
+        return ["WARNING: CH2 showed no video in any run. Is the reference connected? "
+                "(Use --channels 1 on a single-channel rig.)"]
+    bad = [f"{r['test']['id']} r{r['test']['rung']}" for r in withref if r["input"]["present"] and not r["input"]["ok"]]
+    if bad:
+        out.append(f"WARNING: the generator's own output (CH2) looked wrong in {len(bad)} run(s): {', '.join(bad)}. "
+                   "Those results say more about the rig than the TBC.")
+    lat = [r["input"]["latency"]["median_ms"] for r in withref if r["input"].get("latency")]
+    if lat:
+        out.append(f"latency (TBC input to output): {min(lat):.2f}–{max(lat):.2f} ms over {len(lat)} runs "
+                   f"({min(lat) / pm.FIELD_MS:.2f}–{max(lat) / pm.FIELD_MS:.2f} fields)")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("specs", nargs="*")
@@ -84,7 +105,7 @@ def main():
     dut = dut_of(a)
 
     t0 = time.time()
-    with dwf_scope.Scope(a.rate, a.seconds) as scope:
+    with dwf_scope.Scope(a.rate, a.seconds, channels=a.channels) as scope:
         s = open_gen()
         # Rung counts from the firmware's catalog: "  H1  random line jitter  rms_ns: 5 10 20 ..."
         catalog = {}
@@ -93,7 +114,7 @@ def main():
             if f and ":" in line and f[0][0].isalpha() and f[0][1:].isdigit():
                 catalog[f[0]] = len(line.rsplit(":", 1)[1].split())  # the ladder follows the last colon
         plan = [r for spec in (a.specs or SMOKE) for r in rungs_of(spec, catalog)]
-        size = f", keeping about {4 * a.rate * a.seconds * len(plan) / 1e9:.1f} GB of captures" if a.keep else ""
+        size = f", keeping about {2 * a.channels * a.rate * a.seconds * len(plan) / 1e9:.1f} GB of captures" if a.keep else ""
         print(f"{len(plan)} runs{size}")
         results = []
         for i, (test, rung) in enumerate(plan, 1):
@@ -106,6 +127,8 @@ def main():
     path = save_results(results, dut)
     print(f"results: {path}")
     for line in tolerance_lines(results):
+        print(line)
+    for line in input_lines(results):
         print(line)
     dead = [f"{r['test']['id']} r{r['test']['rung']}" for r in results if r and r.get("dead")]
     if dead:

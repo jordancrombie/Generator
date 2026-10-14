@@ -107,7 +107,7 @@ def main():
               ("recovery", "V0", 1, a.recovery)]
 
     samples, t0 = [], None
-    with dwf_scope.Scope(a.rate, a.window) as scope:
+    with dwf_scope.Scope(a.rate, a.window, channels=1) as scope:  # CH1 only: works on any rig
         s = open_gen()
         for phase, tid, rung, dur in phases:
             if dur <= 0:
