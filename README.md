@@ -222,6 +222,32 @@ measured.
 Slow tests capture longer automatically: S10/S11 1.3 s at 25 MS/s, X1 3.3 s
 at 12.5 MS/s.
 
+## Dropout watch
+
+`tools/dropout_watch.py` checks whether a TBC's output **goes dead**: no video
+sync at all, as the Datavideo TBC-1000 did twice for about a minute after
+input-loss tests. It runs three phases:
+
+1. clean V0 (the control);
+2. a stimulus that repeatedly cuts the input (default `S11:2`, two fields of
+   snow every second);
+3. clean V0 again.
+
+Once a second it captures 50 ms of CH1 and classifies the output as **our
+picture**, **video without our marker** (black, or the TBC's own pattern),
+or **dead**. Consecutive dead samples form an episode. The report gives each
+episode's start, phase and length, and the share of dead samples per phase.
+
+```
+python3 tools/dropout_watch.py --dut "Datavideo TBC-1000" --html            # 60 + 180 + 60 s
+python3 tools/dropout_watch.py --stimulus S10:3 --stress 600 --html          # longer, no-signal gaps
+```
+
+Results go to `reports/<time>_dropout_<dut>.json`, plus `.html` with `--html`
+(timeline, episode table, per-phase breakdown). Suite reports also flag any
+run where the TBC's output was dead ("output dead"), and tolerance figures
+skip those runs.
+
 ## Serial commands (921600 baud)
 
 | Command | |
@@ -292,7 +318,8 @@ rms line jitter.
 | `tools/run_suite.py`, `tools/run_test.py` | run many rungs on one scope session, or one rung |
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
 | `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data) |
-| `tools/html_report.py` | the optional HTML report |
+| `tools/html_report.py` | the optional HTML reports (suites and the dropout watch) |
+| `tools/dropout_watch.py` | samples the TBC output once a second through clean / input-loss / clean phases; dead-output episodes |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
 | `tools/gen_cmd.py` | serial helpers (`BAUD`, `request`, `dump_line`) and a command-line sender |
