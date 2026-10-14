@@ -1,6 +1,6 @@
-# TBC Test Catalog & Grader Contract
+# TBT test catalog & grader contract
 
-The design of the rig: what each test sends, what a perfect TBC should do with
+The design of TBT (Time Base Torture): what each test sends, what a perfect TBC should do with
 it, how results will be scored, and what the generator hands the grader.
 Moved into the repo from a claude.ai doc on 2026-10-14 and brought up to date.
 Measured facts live in [bench-notes.md](bench-notes.md), and open work in
