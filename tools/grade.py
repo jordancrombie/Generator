@@ -49,6 +49,7 @@ WEIGHTS = {"H": 3.0, "F": 1.5, "S": 2.0, "C": 1.5, "L": 1.0, "X": 1.0, "V": 1.0}
 UNORDERED = {"S4", "S6", "C1", "X1"}
 STRUCTURE = {"S5", "S6", "S7", "S8"}     # line vs frame ideals differ
 PICTURE_TESTS = re.compile(r"^(V0|H\d|F\d|S[1239]|C\d|L\d)$")
+DISPLACEMENT_TESTS = re.compile(r"^(H\d|F\d|S[1239])$")   # timing tests (noise tests raise the floor themselves)
 
 
 def check(name, ok, value="", limit="", minor=False):
@@ -61,6 +62,7 @@ def ctx_of(runs, tbc_class="frame"):
     disp = ((v0 or {}).get("picture") or {}).get("displacement")
     line = ((v0 or {}).get("markers") or {}).get("line_after_vsync")
     return {"class": tbc_class, "floor_ns": disp["rms_ns"] if disp else None,
+            "v0_out": (v0 or {}).get("picture"), "v0_in": ((v0 or {}).get("input") or {}).get("picture"),
             "floor_peak_ns": disp["peak_ns"] if disp else None,
             "base_line": line["median"] if line else None}
 
@@ -116,24 +118,38 @@ def position_checks(r, ctx):
     return out
 
 
+def sat(pc):
+    return pc["yellow_chroma_pp_ire"] / pc["burst_pp_ire"] if pc.get("burst_pp_ire") else None
+
+
+def sent(tid, p, base):
+    """The picture this test sends, given V0's (single channel: worked out from the params)."""
+    e = dict(base)
+    if tid == "C1":
+        e["burst_pp_ire"] = base["burst_pp_ire"] * float(p["burst_pp_ire"]) / 40.0
+    if tid == "C4":
+        e["yellow_hue_deg"] = base["yellow_hue_deg"] + float(p["deg"])
+    if tid == "L4":
+        k = float(p["white_pct"]) / 100.0
+        e["gray_ire"] = 7.5 + (base["gray_ire"] - 7.5) * k
+        e["yellow_chroma_pp_ire"] = base["yellow_chroma_pp_ire"] * k
+    return e
+
+
 def picture_checks(r, ctx, tid):
+    """V0: the TBC's picture against its input (static accuracy: gain, hue,
+    saturation, burst). Every other test: against what the TBC's own V0
+    transfer predicts for this test's input, so a test grades how the TBC
+    handled that fault, not its static errors again."""
     pc = r.get("picture")
     if not pc:
         return [check("picture measurable", False, "no colour-bar lines in our fields", "", minor=True)]
-    t = r["test"]
-    p = t.get("params", {})
-    pi = ((r.get("input") or {}).get("picture") if r.get("input") else None) or None
-    ref = pi or dict(NOMINAL)
-    if not pi:                                    # single channel: what was sent, nominally
-        if tid == "C1":
-            ref["burst_pp_ire"] = float(p["burst_pp_ire"])
-        if tid == "C4":
-            ref["yellow_hue_deg"] = NOMINAL["yellow_hue_deg"] + float(p["deg"])
-    src = "input" if pi else "nominal"
+    p = r["test"].get("params", {})
+    pi = (r.get("input") or {}).get("picture")
     out = []
 
     d = pc.get("displacement")
-    if d and tid != "V0":
+    if d and DISPLACEMENT_TESTS.match(tid):
         ex, exp_ = excess(d["rms_ns"], ctx["floor_ns"]), excess(d["peak_ns"], ctx["floor_peak_ns"])
         out.append(check("residual H displacement", ex < LIMITS["disp_rms_ns"],
                          f"{ex:.1f} ns rms over V0", f"< {LIMITS['disp_rms_ns']:g} ns"))
@@ -146,33 +162,54 @@ def picture_checks(r, ctx, tid):
                          f"< {LIMITS['killed_chroma_ire']:g}"))
         return out
 
-    dh = (pc["yellow_hue_deg"] - ref["yellow_hue_deg"] + 180) % 360 - 180
+    v0_out, v0_in = ctx["v0_out"], ctx["v0_in"] or NOMINAL
+    if tid == "V0" or not v0_out:
+        # Absolute: the output against what went in.
+        ref, src = (pi, "input") if pi else (sent(tid, p, NOMINAL), "nominal")
+        exp_hue, exp_sat, exp_gray = ref["yellow_hue_deg"], sat(ref), [ref["gray_ire"]]
+        if tid == "L4" and not pi:
+            exp_gray.append(NOMINAL["gray_ire"])
+        db = pc["burst_pp_ire"] - 40.0
+        out.append(check("output burst", abs(db) <= LIMITS["burst_ire"], f"{pc['burst_pp_ire']:.1f} IRE p-p",
+                         f"40 ± {LIMITS['burst_ire']:g}"))
+    else:
+        # Relative: the TBC's V0 transfer applied to this test's input.
+        src = "V0 transfer"
+        inp = pi or sent(tid, p, v0_in)
+        exp_hue = v0_out["yellow_hue_deg"] + (inp["yellow_hue_deg"] - v0_in["yellow_hue_deg"])
+        exp_sat = sat(v0_out) * sat(inp) / sat(v0_in) if sat(v0_in) and sat(inp) and sat(v0_out) else None
+        exp_gray = [v0_out["gray_ire"] * inp["gray_ire"] / v0_in["gray_ire"]]
+        if tid == "L4":                           # an AGC that restores the level also passes
+            exp_gray.append(v0_out["gray_ire"])
+        if tid == "C1":                           # ACC: burst regenerated as on V0
+            db = pc["burst_pp_ire"] - v0_out["burst_pp_ire"]
+            out.append(check("burst regenerated", abs(db) <= LIMITS["burst_ire"], f"{db:+.1f} IRE vs V0",
+                             f"± {LIMITS['burst_ire']:g}"))
+
+    dh = (pc["yellow_hue_deg"] - exp_hue + 180) % 360 - 180
     out.append(check("hue", abs(dh) < LIMITS["hue_deg"], f"{dh:+.1f}° vs {src}", f"< {LIMITS['hue_deg']:g}°"))
-    sat_out = pc["yellow_chroma_pp_ire"] / pc["burst_pp_ire"] if pc["burst_pp_ire"] else None
-    sat_in = ref["yellow_chroma_pp_ire"] / ref["burst_pp_ire"] if ref["burst_pp_ire"] else None
-    if sat_out and sat_in:
-        e = 100 * (sat_out / sat_in - 1)
+    if exp_sat and sat(pc):
+        e = 100 * (sat(pc) / exp_sat - 1)
         out.append(check("saturation (chroma / burst)", abs(e) < LIMITS["sat_pct"], f"{e:+.1f} % vs {src}",
                          f"< {LIMITS['sat_pct']:g} %"))
-    g_ref = ref["gray_ire"]
-    if tid == "L4" and not pi:                    # passes unchanged, or AGC corrects it: either is fine
-        g_alt = 7.5 + (NOMINAL["gray_ire"] - 7.5) * float(p["white_pct"]) / 100
-        g_ref = min((NOMINAL["gray_ire"], g_alt), key=lambda g: abs(pc["gray_ire"] - g))
-    dg = pc["gray_ire"] - g_ref
+    dg = min((pc["gray_ire"] - g for g in exp_gray), key=abs)
     out.append(check("luma (gray bar)", abs(dg) < LIMITS["luma_ire"], f"{dg:+.1f} IRE vs {src}",
                      f"< {LIMITS['luma_ire']:g} IRE"))
-    db = pc["burst_pp_ire"] - 40.0
-    out.append(check("output burst", abs(db) <= LIMITS["burst_ire"], f"{pc['burst_pp_ire']:.1f} IRE p-p",
-                     f"40 ± {LIMITS['burst_ire']:g}"))
     if tid == "C3":
         j = pc["yellow_hue_jitter_deg"]
         out.append(check("hue stability", j < LIMITS["hue_jitter_deg"], f"±{j:.1f}°", f"< {LIMITS['hue_jitter_deg']:g}°"))
     if tid == "L2":
-        n_in = pi["gray_noise_ire_rms"] if pi else 100.0 / 10 ** (float(p["snr_db"]) / 20)
-        ratio = pc["gray_noise_ire_rms"] / n_in if n_in else None
+        # Added noise only: each side's V0 noise (the TBC's own floor, the
+        # generator's and the scope's) is taken out in quadrature first.
+        n0_out = v0_out["gray_noise_ire_rms"] if v0_out else 0.0
+        n0_in = v0_in.get("gray_noise_ire_rms", 0.0) if v0_out else 0.0
+        n_in = excess(pi["gray_noise_ire_rms"], n0_in) if pi else 100.0 / 10 ** (float(p["snr_db"]) / 20)
+        gain = v0_out["gray_ire"] / v0_in["gray_ire"] if v0_out else 1.0     # the TBC's own luma gain
+        n_out = excess(pc["gray_noise_ire_rms"], n0_out)
+        ratio = n_out / (n_in * gain) if n_in else None
         if ratio is not None:
-            out.append(check("noise not amplified", ratio < LIMITS["noise_gain"], f"×{ratio:.2f} vs {src}",
-                             f"< ×{LIMITS['noise_gain']:g}"))
+            out.append(check("noise not amplified", ratio < LIMITS["noise_gain"],
+                             f"×{ratio:.2f} (added noise, vs input × luma gain)", f"< ×{LIMITS['noise_gain']:g}"))
     if tid == "L3":
         w = pc["blanking_wander_ire"]
         out.append(check("hum clamped", w < LIMITS["wander_ire"], f"{w:.2f} IRE rms", f"< {LIMITS['wander_ire']:g}"))
@@ -205,7 +242,8 @@ def grade_run(r, ctx):
         res["notes"].append("rig: " + "; ".join(inp.get("issues", [])))
         return res
     if inp is not None and not inp.get("present") and tid != "V1":
-        res["notes"].append("no video on CH2: judged as single-channel")
+        res["notes"].append("no sync found on CH2 (reference not connected, or this test's input too "
+                            "disturbed to analyse): judged as single-channel")
     if inp is not None and inp.get("verified") is False:
         res["notes"].append("input not verified on CH2 (markers not decodable for this test)")
 

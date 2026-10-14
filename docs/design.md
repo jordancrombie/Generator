@@ -224,14 +224,14 @@ checked against a known-good TBC, so every grade is labelled provisional.
 | Frame sequence | continuous-input tests | markers: back-steps, skips (main); repeats, single-field frames (minor) | 0 |
 | No garbled, ghosted or torn fields | all but S10/S11/X1 | field classes; frames whose fields disagree | 0 |
 | Picture steady vertically | marker tests | marker line after V-sync: spread (main); offset from V0 (minor) | ±1 line |
-| Residual horizontal displacement | V0, H, F, S1–S3, S9, C, L | each colour-bar line's luma against the median line, relative to the line's own sync (Gaussian low-pass removes chroma; offset, gain and tilt fitted alongside the shift); excess over V0's floor | < 10 ns rms (main), < 35 ns at the 99th percentile (minor) |
-| Hue | picture tests | yellow vs burst, against the input (CH2) or nominal 167.1° (+ C4's offset) | < 3° |
-| Saturation | picture tests | yellow chroma ÷ burst, against the input or nominal | < 5 % |
-| Luma | picture tests | gray bar, against the input or nominal (L4 single-channel: unchanged or AGC-corrected both pass) | < 2 IRE |
-| Output burst | picture tests | burst amplitude | 40 ± 2 IRE p-p |
+| Residual horizontal displacement | H, F, S1–S3, S9 (the timing tests) | each colour-bar line's luma against the median line, relative to the line's own sync (Gaussian low-pass removes chroma; offset, gain and tilt fitted alongside the shift); excess over V0's floor | < 10 ns rms (main), < 35 ns at the 99th percentile (minor) |
+| Hue | picture tests | yellow vs burst. V0: against the input (CH2) or nominal 167.1°. Other tests: against the TBC's own V0 transfer applied to this test's input | < 3° |
+| Saturation | picture tests | yellow chroma ÷ burst, judged the same way | < 5 % |
+| Luma | picture tests | gray bar, judged the same way (L4: unchanged or AGC-restored both pass) | < 2 IRE |
+| Output burst | V0 (C1: burst as on V0) | burst amplitude | 40 ± 2 IRE p-p (C1: ± 2 of V0's) |
 | Colour killed | C2 | chroma left with no burst | < 3 IRE p-p |
 | Hue stability | C3 | line-to-line hue jitter | < 3° |
-| Noise not amplified | L2 | gray-bar noise, out ÷ in (CH2, or the SNR sent) | < ×1.1 |
+| Noise not amplified | L2 | added gray-bar noise (each side's V0 noise removed in quadrature), out ÷ (in × the TBC's luma gain) | < ×1.1 |
 | Hum clamped | L3 | blanking wander | < 1 IRE rms |
 | Rides through the gap; clean recovery (minor) | S10, S11 | loss summary | handled; no garbled fields |
 | Clean after stress; no stuck or ghosted fields (minor) | X1 | hunt windows | after window clean |
@@ -254,9 +254,17 @@ Rules:
   through low luma gain, has simply failed them.
 - **Only fields carrying our marker are measured.** A field of the TBC's own
   pattern scores as a failure, never as a pass.
-- **Single-channel runs** are judged against the nominal picture. Two-channel
-  runs use CH2, since the generator's real output differs from nominal
-  (chroma about 0.68× today).
+- **Static picture accuracy is V0's job.** V0 judges the TBC's picture
+  against what went in: gain, hue, saturation and burst. Every other test is
+  judged against the TBC's own V0 transfer applied to that test's input. So a
+  TBC with low luma gain fails V0 once, and each other test grades only how
+  it handled its own fault.
+- **Single-channel runs** use the nominal picture (adjusted for what the test
+  changes) where two-channel runs use CH2. That matters because the
+  generator's real output differs from nominal (chroma about 0.68× today).
+  When CH2's picture can't be measured for a test (S1's shallow sync, L3's
+  hum, L2's heaviest noise), the input is worked out from V0's input
+  instead.
 - `--class line` grades the structure tests (S5–S8) against the line-TBC
   ideal, where the structure passes through. Frame is the default.
 

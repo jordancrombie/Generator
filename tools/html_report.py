@@ -310,9 +310,9 @@ def run_card(r, idx, base=None, g=None):
         tiles.append(tile("Output rate vs input", f"{inp['rate_ppm']:+.1f}", "ppm (0 = locked)"))
     v = inp.get("vs_input")
     if v:
-        g = lambda x: f"×{x:.2f}" if x is not None else "—"
-        tiles += [tile("Burst vs input", g(v["burst"])), tile("Chroma vs input", g(v["chroma"])),
-                  tile("Gray vs input", g(v["gray"])), tile("Hue vs input", f"{v['hue_deg']:+.1f}", "°")]
+        times = lambda x: f"×{x:.2f}" if x is not None else "—"
+        tiles += [tile("Burst vs input", times(v["burst"])), tile("Chroma vs input", times(v["chroma"])),
+                  tile("Gray vs input", times(v["gray"])), tile("Hue vs input", f"{v['hue_deg']:+.1f}", "°")]
     pc = r.get("picture")
     if pc:
         tiles += [
@@ -456,7 +456,7 @@ def write(results, path=None, title="TBT field trial", grades=None):
   <span>levels <b>{esc(lv.get('sync_code', '?'))} / {esc(lv.get('white_code', '?'))}</b> (sync/white code)</span>
   <span>colour <b>{esc(first['test'].get('chroma', '?'))}</b></span>
 </div>
-<p class="note">These are observations of the TBC's output, not grades. "Ideal" describes what a perfect
+<p class="note">{"Observations of the TBC's output, with provisional grades above." if grades else "These are observations of the TBC's output, not grades."} "Ideal" describes what a perfect
 TBC of each class would output for that test. {"Input (CH2) is the generator's output, teed off before the TBC: it checks each run's input and gives the TBC's latency and its gain against the real input." if any(r.get("input") for r in results) else "Captured on CH1 only: picture figures are against nominal levels, and there is no input check or latency."}</p>
 {grades_html(grades)}
 {tolerance_html(results)}
