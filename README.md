@@ -33,7 +33,7 @@ Open work is in [TODO.md](TODO.md).
 | CH2 reference | **Done.** Every two-channel run checks its input, measures the TBC's latency and whether its output is locked to the input, and its gain against the real input |
 | One-channel rigs | **Supported.** `--channels 1` needs only CH1 (one scope channel, no tee) |
 | Still to do | See [TODO.md](TODO.md): generator level and chroma calibration, H6 velocity error, the AVT-8710 fault hunt |
-| Grader | Not part of this repo. `tools/perturb_model.py` is its reference for what was sent |
+| Grader | **Provisional.** `tools/grade.py` (or `run_suite.py --grade`) grades every run, each test and the whole field trial. Thresholds not yet checked against a known-good TBC |
 
 ## Wiring
 
@@ -254,6 +254,32 @@ measured.
 Slow tests capture longer automatically: S10/S11 1.3 s at 25 MS/s, X1 3.3 s
 at 12.5 MS/s.
 
+## Grading (provisional)
+
+`--grade` on `run_suite.py` grades the field trial as it finishes, and adds
+the grades to the HTML report (with `--html`):
+- a verdict per run (pass, marginal, fail, invalid, info) with every check
+  listed;
+- a grade per test (the highest rung passed);
+- an overall score out of 100.
+
+`tools/grade.py` re-grades a saved trial without recapturing, for example
+after a threshold change:
+
+```
+python3 tools/run_suite.py --grade --html                    # grade a field trial as it runs
+python3 tools/grade.py reports/<time>_suite_<dut>.json --html  # re-grade a saved one
+python3 tools/grade.py reports/<time>_suite_<dut>.json --class line   # line-TBC ideals for S5-S8
+```
+
+The checks and thresholds are in [docs/design.md](docs/design.md#scoring-implemented-provisional).
+They are first proposals, so treat grades as provisional until they've been
+checked against a known-good TBC. With CH2, picture figures are judged
+against the real input; with one channel, against nominal levels. The
+residual horizontal displacement is judged as the excess over the trial's
+V0 run, which sets the measurement floor. So include V0 in every graded
+trial (the default set does).
+
 ## Comparing field trials
 
 Every field trial (`run_suite.py` run) also saves its results to
@@ -368,6 +394,7 @@ rms line jitter.
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
 | `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data); with CH2, the input check, latency and gain against the input (`compare_input()`) |
 | `tools/html_report.py` | the optional HTML reports (suites and the dropout watch) |
+| `tools/grade.py` | grades a field trial: per run, per test and overall (provisional thresholds) |
 | `tools/compare_suites.py` | lines up several suites' results test by test; dead-output episodes, level and latency |
 | `tools/dropout_watch.py` | samples the TBC output once a second through clean / input-loss / clean phases; dead-output episodes |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |

@@ -181,6 +181,31 @@ so runs are now deleted after their report unless `--keep` is given.
   with a power-cycle and didn't come back in 45 minutes. Either the
   test-switch artifact was a trigger, or the fault needs a longer warm or
   stressed run to appear.
+- **First graded field trial** (2026-10-14, after a power-cycle;
+  `reports/20261014-192342_suite_*`, report `20261014-192558_*`):
+  51 / 100, provisional.
+  - **Timing:** corrects slow timing errors (H2 wow, H3 steps, F1 clock
+    offset) but **not random line jitter**. H1 passes up to 10 ns rms; at
+    50 ns rms in, the picture still moves 57 ns rms. Head-switch skew (H4)
+    and a single displaced line (H5) also pass through. So it looks like a
+    line-locked sampling clock with a slow PLL, not a per-line correcting
+    TBC.
+  - **Colour:** no per-line chroma phase correction (C3 hue wander passes
+    straight through). ACC isn't proportional: with a weak burst,
+    saturation falls 27–62 %.
+  - **Picture:** V0 fails on static accuracy: luma −31 IRE against its
+    input (×0.64 gain), saturation −6 %.
+  - **Structure:** S4 r6 (no V-sync) garbles fields; S7 and S8 tear frames.
+    S10 rides through ∞, with a garbled field on recovery at 1–4.
+    S11 r3 lost sync once.
+- **Died on clean input, 2026-10-14.** Alive at 18:14. By 19:01, with only
+  clean V0 playing and no test switches in between, the output was dead, and
+  it stayed dead for a whole 71-run field trial (`reports/20261014-190845_*`).
+  CH2 showed our signal throughout. So the dead state doesn't need input loss
+  to start. The dead output is a single tone at **3.548 MHz**, 0.20 V p-p:
+  about 31 kHz (0.9 %) below the 3.579545 MHz subcarrier. It looks like the
+  TBC's own subcarrier oscillator running unlocked, with the sync and video
+  path gone.
 - **CH2 wired (2026-10-14): latency and lock.** The TBC-1000's output is
   **not locked to its input**: its line period is 63555.05 ns against our
   63556.45 ns, so it runs about +22 ppm fast. It behaves as a frame

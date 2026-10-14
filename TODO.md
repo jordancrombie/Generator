@@ -88,6 +88,15 @@ order. Measured facts and open issues live in
       `subsample_steps`, 4 with SMPTE bars).
 
 ## Grader
-- [ ] Scoring per the design doc (thresholds, severity ladders, per-class
-      ideals). `tools/perturb_model.py` is its reference for what was sent;
-      `observe_tbc.analyze()` already extracts most of the output figures.
+- [x] `tools/grade.py`: per-run verdicts, per-test grades, an overall score;
+      `--grade` on `run_suite.py`; grades in the HTML report (2026-10-14).
+- [x] Residual horizontal displacement (picture vs its own sync, judged as
+      the excess over V0).
+- [ ] Check the thresholds against a known-good TBC, and the weights.
+- [ ] Recovery time after a step (H3, S4, S6), correction ratio in dB,
+      burst phase stability.
+- [ ] Lower the displacement floor (~11 ns on CH1, ~20 ns on CH2: scope noise):
+      terminate CH1 and recheck; average over more of the line; a smaller
+      scope range.
+- [ ] Fingerprint per TBC from several field trials, then identify a TBC
+      against a library of fingerprints.

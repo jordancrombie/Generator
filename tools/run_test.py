@@ -136,10 +136,10 @@ def finish(run, keep=False):
     return result
 
 
-def write_html(results, dest):
+def write_html(results, dest, grades=None):
     results = [r for r in results if r]
     if dest and results:
-        print(f"HTML report: {html_report.write(results, None if dest == 'auto' else dest)}")
+        print(f"HTML report: {html_report.write(results, None if dest == 'auto' else dest, grades=grades)}")
 
 
 def main():
