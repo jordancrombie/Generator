@@ -78,7 +78,7 @@ def picture_metrics(x, hs, fs, tip, blank):
         lo = np.exp(-2j * np.pi * FSC * (np.arange(i0, i1) - s) / fs)
         return float(ire(seg.mean())), 2 * np.mean((seg - seg.mean()) * lo) * 40.0 / (blank - tip)
 
-    rows = []
+    rows, sel = [], []
     for s in hs:
         if int(s + 64 * us) >= len(x) or s < 2 * us:
             continue
@@ -91,6 +91,7 @@ def picture_metrics(x, hs, fs, tip, blank):
         _, burst = demod(s, 5.8, 7.6)
         y_y, yel = demod(s, *bar(1))
         i0, i1 = int(s + bar(0, 0.15, 0.85)[0] * us), int(s + bar(0, 0.15, 0.85)[1] * us)
+        sel.append(s)
         rows.append((abs(burst) * 2, np.degrees(np.angle(yel) - np.angle(burst)) + 180, abs(yel) * 2, g_y,
                      float(ire(x[int(s + 8.2 * us):int(s + 9.1 * us)].mean())), float(np.std(ire(x[i0:i1])))))
     if len(rows) < 10:
@@ -104,7 +105,50 @@ def picture_metrics(x, hs, fs, tip, blank):
             "yellow_chroma_pp_ire": float(np.median(a[:, 2])),
             "gray_ire": float(np.median(a[:, 3])),
             "blanking_wander_ire": float(np.std(a[:, 4])),
-            "gray_noise_ire_rms": float(np.median(a[:, 5]))}
+            "gray_noise_ire_rms": float(np.median(a[:, 5])),
+            "displacement": displacement(x, np.array(sel), fs)}
+
+
+def displacement(x, starts, fs, iters=3):
+    """Residual horizontal displacement of the picture against each line's own
+    sync: how far each colour-bar line's luma sits from the median line, in ns.
+
+    Each line is sampled every 50 ns from 12 to 60 us after its sync, then
+    low-passed with a Gaussian (sigma 0.2 us, which takes the 3.58 MHz
+    chroma down by ~90 dB; chroma flips phase every line, so any left over
+    reads as a shift). Each line's shift against the median template is then
+    found by Gauss-Newton, fitted together with the line's own offset, gain
+    and tilt: the bars step down from gray to blue, so a level change alone
+    would otherwise read as tens of ns. A TBC that corrects timing leaves a
+    few ns; one that doesn't shows the input's jitter here."""
+    if len(starts) < 10:
+        return None
+    step_us = 0.05
+    grid = np.arange(12.0, 60.0, step_us) * fs / 1e6            # samples after sync
+    g = np.exp(-0.5 * (np.arange(-18, 19) * step_us / 0.2) ** 2)
+    g /= g.sum()
+
+    def prof(s, d):                                              # linear interpolation, then low-pass
+        pos = s + grid + d
+        i = np.clip(pos.astype(np.int64), 0, len(x) - 2)
+        f = pos - i
+        return np.convolve(x[i] * (1 - f) + x[i + 1] * f, g, mode="valid")
+
+    shift = np.zeros(len(starts))
+    for _ in range(iters):
+        P = np.array([prof(s, d) for s, d in zip(starts, shift)])
+        ref = np.median(P, axis=0)
+        dref = np.gradient(ref)                                  # per grid step
+        if not np.any(dref):
+            return None
+        ramp = np.linspace(-1.0, 1.0, len(ref))
+        A = np.stack([dref, np.ones_like(ref), ref, ramp], axis=1)
+        coef, *_ = np.linalg.lstsq(A, (P - ref).T, rcond=None)  # per line: shift, offset, gain, tilt
+        shift -= coef[0] * step_us * fs / 1e6
+    ns = shift / fs * 1e9
+    ns -= np.median(ns)                                          # a fixed offset doesn't count
+    return {"lines": int(len(ns)), "rms_ns": float(np.sqrt(np.mean(ns ** 2))),
+            "peak_ns": float(np.percentile(np.abs(ns), 99))}
 
 
 # ---- Per-field classification -----------------------------------------------
@@ -419,6 +463,10 @@ def print_report(r):
               f"(±{pc['yellow_hue_jitter_deg']:.1f}), yellow chroma {pc['yellow_chroma_pp_ire']:.1f} IRE p-p, "
               f"gray {pc['gray_ire']:.1f} IRE, blanking wander {pc['blanking_wander_ire']:.2f} IRE rms, "
               f"noise {pc['gray_noise_ire_rms']:.2f} IRE rms")
+        d = pc.get("displacement")
+        if d:
+            print(f"  picture displacement vs own sync: {d['rms_ns']:.1f} ns rms, {d['peak_ns']:.0f} ns peak "
+                  f"over {d['lines']} lines (includes the measurement floor; see V0)")
     fs_ = r.get("field_summary")
     if fs_:
         print(f"  output fields: {fs_['ours']} ours, {fs_['unmarked']} ours unmarked, {fs_['blend']} blended, "
@@ -470,9 +518,13 @@ def compare_input(out, inp):
         res["ok"] = False
         res["issues"].append("no video on CH2 (reference not connected, or the generator stopped)")
         return res
+    # Generator faults make the run invalid. Undecodable markers don't: tests
+    # such as S1 (10 IRE sync) and L3 (hum) make the input hard to slice on
+    # purpose, so they leave the input unverified rather than wrong.
     ev = inp["markers"]["events"]
-    if not inp["markers"]["decoded"]:
-        res["issues"].append("no frame markers decoded on CH2")
+    res["verified"] = bool(inp["markers"]["decoded"])
+    if not res["verified"]:
+        res["notes"] = ["frame markers not decodable on CH2 for this test: input not verified"]
     if ev["backward_steps"] or ev["repeats"]:
         res["issues"].append(f"generator frame sequence broken ({ev['backward_steps']} back, {ev['repeats']} repeated)")
     if out.get("dma_restarts_during"):
@@ -521,7 +573,8 @@ def print_input(r):
     if not i["present"] and r["test"]["id"] != "V1":
         print("  input (CH2): no video. Is the reference connected? (--channels 1 for a single-channel rig)")
         return
-    state = "ok" if i["ok"] else "CHECK: " + "; ".join(i["issues"])
+    state = ("CHECK: " + "; ".join(i["issues"]) if not i["ok"] else
+             "not verified (markers not decodable on CH2)" if i.get("verified") is False else "ok")
     extra = ""
     if i["present"]:
         extra = f", {i['markers']} markers, H jitter {i['h_jitter_ns_rms']:.1f} ns rms" if i["h_jitter_ns_rms"] is not None else ""

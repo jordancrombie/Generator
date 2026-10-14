@@ -1,7 +1,7 @@
 """A field trial: run several test rungs on one scope session and report on each.
 
-usage: run_suite.py [SPEC ...] [--channels 1|2] [--dut NAME] [--note TEXT] [--keep]
-                    [--html [PATH]] [--rate HZ] [--seconds S] [--settle S]
+usage: run_suite.py [SPEC ...] [--channels 1|2] [--grade [--class frame|line]] [--dut NAME]
+                    [--note TEXT] [--keep] [--html [PATH]] [--rate HZ] [--seconds S] [--settle S]
 
 SPEC is TEST:RUNGS, e.g. H1:1-6, S7:4, H5:1,3,5 or H2:all.
 With no SPEC, runs the smoke set: one representative rung of every test.
@@ -10,6 +10,9 @@ The scope settles once for the whole suite; each rung then costs the TBC
 lock time plus the capture. Each run is reported and then deleted, as in
 run_test.py; --keep keeps them (about 2 bytes x rate x seconds per channel
 each, so mind the disk with long suites). --channels is as in run_test.py.
+--grade grades the field trial (provisional; see grade.py) and adds the
+grades to the HTML report. A saved trial can be re-graded later with
+grade.py.
 """
 import argparse, json, os, re, time
 
@@ -87,6 +90,9 @@ def input_lines(results):
         return ["WARNING: CH2 showed no video in any run. Is the reference connected? "
                 "(Use --channels 1 on a single-channel rig.)"]
     bad = [f"{r['test']['id']} r{r['test']['rung']}" for r in withref if r["input"]["present"] and not r["input"]["ok"]]
+    unver = [f"{r['test']['id']} r{r['test']['rung']}" for r in withref if r["input"].get("verified") is False]
+    if unver:
+        out.append(f"note: input not verified on CH2 (markers not decodable for these tests): {', '.join(unver)}")
     if bad:
         out.append(f"WARNING: the generator's own output (CH2) looked wrong in {len(bad)} run(s): {', '.join(bad)}. "
                    "Those results say more about the rig than the TBC.")
@@ -100,6 +106,9 @@ def input_lines(results):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("specs", nargs="*")
+    ap.add_argument("--grade", action="store_true", help="grade the field trial (provisional thresholds)")
+    ap.add_argument("--class", dest="tbc_class", choices=("frame", "line"), default="frame",
+                    help="which ideal the structure tests are graded against (default frame)")
     add_common_args(ap)
     a = ap.parse_args()
     dut = dut_of(a)
@@ -133,7 +142,12 @@ def main():
     dead = [f"{r['test']['id']} r{r['test']['rung']}" for r in results if r and r.get("dead")]
     if dead:
         print(f"WARNING: TBC output was dead (no video sync) during {len(dead)} run(s): {', '.join(dead)}")
-    write_html(results, a.html)
+    G = None
+    if a.grade:
+        import grade
+        G = grade.grade(results, a.tbc_class)
+        grade.print_grades(G)
+    write_html(results, a.html, G)
 
 
 if __name__ == "__main__":

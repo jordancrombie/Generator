@@ -22,8 +22,9 @@ repeatable, and described in a machine-readable manifest.
 - **TBC under test,** then a monitor and vectorscope on loop-through for a
   human check.
 - **CH1, result:** the end of the chain, terminated in 75 Ω.
-- **Analysis:** `tools/observe_tbc.py` reads the manifest plus the CH1 (and
-  CH2) capture. The grader will score from its output (see Scoring).
+- **Analysis and grading:** `tools/observe_tbc.py` reads the manifest plus
+  the CH1 (and CH2) capture, and `tools/grade.py` scores its output (see
+  Scoring).
 
 **One-channel rigs are supported.** With `--channels 1` only CH1 is captured,
 so a single-channel scope and no tee are enough. Everything that depends on
@@ -189,38 +190,75 @@ in the "after" window.
     hue shift.
   - **Output level** (sync depth in volts), to catch a sagging output.
 
-## Scoring (proposed, not yet implemented)
+## Scoring (implemented, provisional)
 
-A test's grade is the highest rung at which the TBC still meets every pass
-threshold. The overall grade is a weighted roll-up of those rungs. The H group
-weighs most, because re-timing is the TBC's core job.
+`tools/grade.py` grades a field trial from its saved analysis. Use
+`run_suite.py --grade`, or `grade.py reports/<time>_suite_<dut>.json` to
+re-grade an old trial. The thresholds are first proposals and haven't been
+checked against a known-good TBC, so every grade is labelled provisional.
 
-| Metric | How it is measured | Proposed pass threshold |
-|---|---|---|
-| Residual horizontal displacement | Position of the bar edges per line vs the ideal, after removing a fixed offset | < 10 ns rms, < 35 ns peak |
-| Correction ratio | Input displacement rms ÷ output displacement rms (input from CH2 when present) | Reported in dB, not thresholded |
-| Output H stability | Line-period jitter of the output's own H sync | < 5 ns rms |
-| Lock integrity | Lines with missing or misplaced sync; field-sequence breaks; frame-marker gaps | 0 |
-| Recovery time | Lines from a step event until displacement is under threshold | ≤ 3 lines (H3), ≤ 1 field (S4, S6) |
-| Hue error | Per bar vs burst, vectorscope style | < 3° |
-| Saturation error | Chroma amplitude per bar vs the input (CH2) or ideal | < 5 % |
-| Luma error | Per bar or step vs the input (CH2) or ideal | < 2 IRE |
-| Burst | Amplitude and phase stability on the output | 40 ± 2 IRE p-p, < 1° rms |
-| Fallback / dead output | Fields of the TBC's own pattern; runs with no output sync | 0; any is a failure of that rung |
-| Lost-field tolerance | Largest N of S10/S11 handled | Reported (∞ above 10), not thresholded |
+**Each run gets one verdict:**
+
+| Verdict | Meaning |
+|---|---|
+| pass | every check met |
+| marginal | only minor checks missed: a garbled field on recovery, a repeated frame, peak displacement, the picture not quite where V0 put it |
+| fail | a main check missed |
+| invalid | the rig is at fault: CH2 shows the generator's own output was wrong, or the analysis took a V1 fallback for our picture |
+| info | nothing to grade: V1, or the event fell outside the capture |
+
+**A test's grade:**
+- *Ordered ladders:* the highest rung passed with every rung below it also
+  passed.
+- *Unordered ladders* (S4 variants, S6 ±, C1 with its 60 IRE rung, X1
+  stress types): k of n rungs passed.
+- *Overall:* a weighted mean of the group scores, out of 100. Pass counts
+  1, marginal 0.5, fail 0. Weights: H 3, S 2, F 1.5, C 1.5, L 1, X 1, V 1.
+
+**Checks:**
+
+| Check | Applies to | How it is measured | Pass threshold |
+|---|---|---|---|
+| Output alive, standard fields, never its own pattern | every test (standard fields: not S5–S8 for a line TBC) | V-syncs; field lengths; field classes | 262.5 lines; 0 fallback fields |
+| Output H stability | every test | line-period jitter of the output's own H sync | < 5 ns rms |
+| Frame sequence | continuous-input tests | markers: back-steps, skips (main); repeats, single-field frames (minor) | 0 |
+| No garbled, ghosted or torn fields | all but S10/S11/X1 | field classes; frames whose fields disagree | 0 |
+| Picture steady vertically | marker tests | marker line after V-sync: spread (main); offset from V0 (minor) | ±1 line |
+| Residual horizontal displacement | V0, H, F, S1–S3, S9, C, L | each colour-bar line's luma against the median line, relative to the line's own sync (Gaussian low-pass removes chroma; offset, gain and tilt fitted alongside the shift); excess over V0's floor | < 10 ns rms (main), < 35 ns at the 99th percentile (minor) |
+| Hue | picture tests | yellow vs burst, against the input (CH2) or nominal 167.1° (+ C4's offset) | < 3° |
+| Saturation | picture tests | yellow chroma ÷ burst, against the input or nominal | < 5 % |
+| Luma | picture tests | gray bar, against the input or nominal (L4 single-channel: unchanged or AGC-corrected both pass) | < 2 IRE |
+| Output burst | picture tests | burst amplitude | 40 ± 2 IRE p-p |
+| Colour killed | C2 | chroma left with no burst | < 3 IRE p-p |
+| Hue stability | C3 | line-to-line hue jitter | < 3° |
+| Noise not amplified | L2 | gray-bar noise, out ÷ in (CH2, or the SNR sent) | < ×1.1 |
+| Hum clamped | L3 | blanking wander | < 1 IRE rms |
+| Rides through the gap; clean recovery (minor) | S10, S11 | loss summary | handled; no garbled fields |
+| Clean after stress; no stuck or ghosted fields (minor) | X1 | hunt windows | after window clean |
+
+**Not yet graded:**
+- *Recovery time* (H3, S4, S6): lines from a step until displacement is
+  back under the threshold.
+- *Correction ratio:* input displacement ÷ output displacement, in dB.
+- *Burst phase stability.*
+- *Lost-field tolerance:* reported, not thresholded.
+- *Latency and lock:* reported, not graded.
 
 Rules:
 
-- **V0 runs first in every session.** Its measured errors are the floor. If
-  V0 itself fails a threshold, or (with CH2) its input check fails, the rig is
-  at fault, not the TBC, and the session stops.
+- **V0 runs first in every field trial.** Its picture displacement is the
+  measurement floor (scope noise: about 11 ns rms on an unterminated CH1,
+  20 ns on CH2). Other runs are judged on their excess over it, in
+  quadrature. If V0's *input* check fails, the rig is at fault and its
+  results are invalid. A TBC that fails V0's picture checks, for example
+  through low luma gain, has simply failed them.
 - **Only fields carrying our marker are measured.** A field of the TBC's own
   pattern scores as a failure, never as a pass.
-- **Single-channel runs** are scored against the ideal levels in the
-  manifest. Two-channel runs use CH2 for gain, since the generator's real
-  output differs from nominal (see bench notes: chroma about 0.68× today).
-- Thresholds and group weights are first proposals. They need checking
-  against a known-good TBC.
+- **Single-channel runs** are judged against the nominal picture. Two-channel
+  runs use CH2, since the generator's real output differs from nominal
+  (chroma about 0.68× today).
+- `--class line` grades the structure tests (S5–S8) against the line-TBC
+  ideal, where the structure passes through. Frame is the default.
 
 ## Grader contract
 
@@ -335,7 +373,11 @@ model the firmware renders from.
 5. **Phase 4, fault tests (done 2026-10-13/14):** S10, S11, V1 and X1, the
    dropout watch, suite comparison, CH2 input check and latency,
    single-channel mode.
-6. **Next:** scoring (above), H6 velocity error, and a tape program mode
+6. **Phase 5, grading (started 2026-10-14):** `grade.py` with provisional
+   thresholds and picture displacement. Next: a fingerprint per TBC from
+   several field trials, then identifying a TBC against a library of
+   fingerprints.
+7. **Later:** H6 velocity error, and a tape program mode
    that steps through rungs on a timed schedule for recording test tapes,
    for tape-based TBCs with no passthrough.
 

@@ -279,6 +279,8 @@ def input_badge(r):
         return '<span class="badge b-warn">no CH2 video</span>'
     if not i["ok"]:
         return f'<span class="badge b-bad" title="{esc("; ".join(i["issues"]))}">input wrong</span>'
+    if i.get("verified") is False:
+        return '<span class="badge b-info">input not verified</span>'
     return '<span class="badge b-ok">input ok</span>'
 
 
@@ -287,7 +289,7 @@ def latency_text(r):
     return f"{L['median_ms']:.2f} ms" if L else "—"
 
 
-def run_card(r, idx, base=None):
+def run_card(r, idx, base=None, g=None):
     t, h, m = r["test"], r["h"], r["markers"]
     anchor = f"run-{idx}"
     ideal = r.get("ideal", {})
@@ -320,6 +322,8 @@ def run_card(r, idx, base=None):
             tile("Gray bar", f"{pc['gray_ire']:.1f}", "IRE (76.9)"),
             tile("Blanking wander", f"{pc['blanking_wander_ire']:.2f}", "IRE rms"),
             tile("Noise on gray", f"{pc['gray_noise_ire_rms']:.2f}", "IRE rms"),
+            *([tile("Picture displacement", f"{pc['displacement']['rms_ns']:.1f}",
+                    f"ns rms ({pc['displacement']['peak_ns']:.0f} peak)")] if pc.get("displacement") else []),
         ]
     frames = m["frames"]
     if r.get("field_log"):
@@ -343,6 +347,7 @@ def run_card(r, idx, base=None):
     <dt>Ideal, frame TBC</dt><dd>{esc(ideal.get('frame_tbc', '—'))}</dd></dl>
   <div class="tiles">{''.join(tiles)}</div>
   <div>{fields_badge(r)} {sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)} {input_badge(r)}</div>
+  {checks_html(g)}
   {seq}
   {wave}
   <p class="cap">Run {esc(r['run'])} · {r['seconds']:.2f} s captured</p>
@@ -365,8 +370,49 @@ def tolerance_html(results):
     return f'<h2>Fault tests</h2><ul class="note" style="list-style:none;padding-left:12px">{items}</ul>'
 
 
-def write(results, path=None, title="TBT field trial"):
-    """Write the report and return its path."""
+VERDICT_BADGE = {"pass": "b-ok", "marginal": "b-warn", "fail": "b-bad", "invalid": "b-bad", "info": "b-info"}
+
+
+def verdict_badge(g):
+    if not g:
+        return ""
+    return f'<span class="badge {VERDICT_BADGE.get(g["verdict"], "")}">{esc(g["verdict"])}</span>'
+
+
+def checks_html(g):
+    if not g or not g["checks"]:
+        return f'<p class="cap">{esc("; ".join(g["notes"]))}</p>' if g and g["notes"] else ""
+    rows = "".join(
+        f'<tr><td>{"✓" if c["ok"] else ("~" if c["minor"] else "✗")}</td><td>{esc(c["name"])}</td>'
+        f'<td>{esc(c["value"])}</td><td>{esc(c["limit"])}</td></tr>' for c in g["checks"])
+    notes = f'<p class="cap">{esc("; ".join(g["notes"]))}</p>' if g["notes"] else ""
+    return (f'<h3 style="font-size:14px;margin:14px 0 6px">Grade: {verdict_badge(g)}</h3>'
+            f'<div class="scroll"><table><thead><tr><th></th><th>Check</th><th>Measured</th><th>Limit</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>{notes}')
+
+
+def grades_html(G):
+    if not G:
+        return ""
+    groups = " · ".join(f"{k} {100 * v:.0f}" for k, v in sorted(G["groups"].items()))
+    score = '<p class="note"><b>Not scored.</b></p>' if G["score"] is None else ""
+    score = score or (f'<p style="font-size:28px;font-weight:700;margin:6px 0">{G["score"]:.0f}<span style="font-size:15px;'
+             f'color:var(--muted)"> / 100</span></p><p class="cap">By group: {esc(groups)} (weights: H 3, S 2, '
+             f'F and C 1.5, others 1)</p>') if G["score"] is not None else ""
+    rows = "".join(f'<tr><td>{esc(tid)}</td><td>{esc(t["summary"])}</td><td>'
+                   + " ".join(f'<span class="badge {VERDICT_BADGE.get(v, "")}">r{r} {esc(v)}</span>' for r, v in t["rungs"])
+                   + "</td></tr>" for tid, t in G["tests"].items())
+    notes = "".join(f"<li>{esc(n)}</li>" for n in G["notes"])
+    return (f'<h2>Grade (provisional)</h2><p class="note">Thresholds are first proposals (docs/design.md, Scoring), '
+            f'not yet checked against a known-good TBC. Judged against {esc(G["class"])} TBC ideals.'
+            + (f' Displacement is the excess over V0 ({G["floor_ns"]:.1f} ns floor).' if G["floor_ns"] is not None else "")
+            + f'</p>{score}<div class="scroll"><table><thead><tr><th>Test</th><th>Grade</th><th>Rungs</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>' + (f'<ul class="cap">{notes}</ul>' if notes else ""))
+
+
+def write(results, path=None, title="TBT field trial", grades=None):
+    """Write the report and return its path. `grades` is grade.grade()'s result, if any."""
+    gmap = {(g["test"], g["rung"]): g for g in grades["runs"]} if grades else {}
     if not results:
         raise ValueError("no results to report")
     first = results[0]
@@ -392,7 +438,8 @@ def write(results, path=None, title="TBT field trial"):
             f'<td class="num">{jitter}</td>'
             f'<td>{sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)}</td>'
             f'{picture_cells(r)}<td class="num">{r["markers"]["decoded"]}</td>'
-            f'<td>{input_badge(r)}</td><td class="num">{latency_text(r)}</td></tr>')
+            f'<td>{input_badge(r)}</td><td class="num">{latency_text(r)}</td>'
+            + (f'<td>{verdict_badge(gmap.get((t["id"], t["rung"])))}</td>' if grades else "") + '</tr>')
     notes = f'<p class="note">{esc(dut["notes"])}</p>' if dut.get("notes") else ""
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -411,14 +458,15 @@ def write(results, path=None, title="TBT field trial"):
 </div>
 <p class="note">These are observations of the TBC's output, not grades. "Ideal" describes what a perfect
 TBC of each class would output for that test. {"Input (CH2) is the generator's output, teed off before the TBC: it checks each run's input and gives the TBC's latency and its gain against the real input." if any(r.get("input") for r in results) else "Captured on CH1 only: picture figures are against nominal levels, and there is no input check or latency."}</p>
+{grades_html(grades)}
 {tolerance_html(results)}
 <h2>Summary</h2>
 <div class="scroll"><table>
 <thead><tr><th>Test</th><th>Rung</th><th>Parameters</th><th>Aimed at</th><th>Output fields</th><th>H jitter</th>
-<th>Frame sequence</th><th>Burst</th><th>Hue</th><th>Gray</th><th>Markers</th><th>Input (CH2)</th><th>Latency</th></tr></thead>
+<th>Frame sequence</th><th>Burst</th><th>Hue</th><th>Gray</th><th>Markers</th><th>Input (CH2)</th><th>Latency</th>{"<th>Grade</th>" if grades else ""}</tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
 <h2>Runs</h2>
-{''.join(run_card(r, i, base) for i, r in enumerate(results))}
+{''.join(run_card(r, i, base, gmap.get((r["test"]["id"], r["test"]["rung"]))) for i, r in enumerate(results))}
 <footer>Generated by tools/html_report.py · TBT (Time Base Torture)</footer>
 </main></body></html>
 """
