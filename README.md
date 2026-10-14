@@ -1,10 +1,14 @@
-# NTSC Test-Signal Generator (ESP32)
+# TBT: Time Base Torture
 
-The generator side of a rig for grading **time-base correctors (TBCs) used with
-VHS and Betamax**. An ESP32 makes NTSC composite video with precisely
-controlled faults. The signal passes through the TBC under test, and an
-ADP2230 captures what went in and what came out, so a separate grader can
-score how well the TBC repaired it.
+A rig for putting **time-base correctors (TBCs) used with VHS and Betamax**
+through their paces. An ESP32 generates NTSC composite video with precisely
+controlled faults. The signal passes through the TBC under test, and a scope
+(an ADP2230 here) captures what came out and, optionally, what went in. The
+tools then report how well the TBC repaired it. A grader is in progress.
+
+A **field trial** is one run of the suite against a TBC: a series of test
+rungs, each captured and analysed, rolled up into one report. The name works
+twice over, since many of the tests drop, cut or snow fields.
 
 ![Test rig: the ESP32 feeds the TBC; CH2 records the generator output, CH1 the TBC output; the grader compares them](docs/rig.svg)
 
@@ -172,7 +176,7 @@ The host tools need `numpy` and `pyserial`.
 export TBC_DUT="AVT-8710"                         # name the device under test once per session
 export TBC_NOTE="composite in/out, controls at default"
 export TBC_CHANNELS=1                             # only if your rig has CH1 alone (see "Minimal rig")
-python3 tools/run_suite.py                      # smoke set: one rung of every test (~3 s each)
+python3 tools/run_suite.py                      # a field trial: one rung of every test (~3 s each)
 python3 tools/run_suite.py --html               # ...plus an HTML report in reports/
 python3 tools/run_suite.py H1:all S7:4-5        # chosen tests and rungs on one scope session
 python3 tools/run_test.py H1 4                  # a single rung
@@ -203,8 +207,8 @@ committed. Where the time goes is broken down in
 
 ## Sample report
 
-[docs/sample-report.html](docs/sample-report.html) is a full `--html` report:
-56 runs on a warmed-up green AVT-8710, covering one rung of every test, every
+[docs/sample-report.html](docs/sample-report.html) is a full `--html` report
+of a field trial: 56 runs on a warmed-up green AVT-8710, covering one rung of every test, every
 rung of S10/S11, all five X1 stresses and V1. GitHub shows HTML files as
 source, so download it and open it in a browser. The page is self-contained.
 
@@ -250,9 +254,9 @@ measured.
 Slow tests capture longer automatically: S10/S11 1.3 s at 25 MS/s, X1 3.3 s
 at 12.5 MS/s.
 
-## Comparing suites
+## Comparing field trials
 
-Every `run_suite.py` run also saves its results to
+Every field trial (`run_suite.py` run) also saves its results to
 `reports/<time>_suite_<dut>.json`. `tools/compare_suites.py` lines several of
 them up test by test, which is useful for repeat runs on one TBC or for
 comparing TBCs:

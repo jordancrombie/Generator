@@ -1,4 +1,4 @@
-"""Run several test rungs on one scope session and report on each.
+"""A field trial: run several test rungs on one scope session and report on each.
 
 usage: run_suite.py [SPEC ...] [--channels 1|2] [--dut NAME] [--note TEXT] [--keep]
                     [--html [PATH]] [--rate HZ] [--seconds S] [--settle S]
@@ -123,7 +123,7 @@ def main():
             print(f"[{i}/{len(plan)}] {test} r{rung}: {time.time() - t:.1f} s")
             results.append(finish(run, a.keep))
         request(s, "test V0", until="\n")
-    print(f"done in {time.time() - t0:.1f} s")
+    print(f"field trial done in {time.time() - t0:.1f} s")
     path = save_results(results, dut)
     print(f"results: {path}")
     for line in tolerance_lines(results):
