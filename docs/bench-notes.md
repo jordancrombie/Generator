@@ -149,6 +149,28 @@ so runs are now deleted after their report unless `--keep` is given.
   window, which two fields of snow can't produce. No dropouts on clean
   input. So the dropouts vary from under a second to about a minute, and
   have only been seen during input loss.
+- **More data, 2026-10-13 evening** (reports `20261013-2122*` to `2147*`):
+  - Three suites back to back (`compare_suites.py`): suites 1 and 2 were
+    clean, with lost-field tolerance ∞ in both. In suite 3 the output died
+    from S4 r6 to S6 r6 (~13 s) and was back by S7 r4. S10 tolerance fell
+    to 2.
+  - S4:6 watch (30 / 180 / 30 s): 5 episodes, lasting 1–10 s, including one
+    in the clean baseline.
+  - **Rig artifact found and fixed:** on every test switch the generator
+    parked the DMA ring on sync-only lines with no vertical sync for
+    ≥100 ms. It now parks on a standard 525-line black frame.
+  - After the fix, a 4-minute clean V0 control had 0/238 dead samples.
+  - After the fix, an S4:6 repeat died 98 s into the stimulus. It stayed
+    dead through 30 s of clean V0 and was still dead minutes later, with
+    0 syncs and ~0.2 V of swing. The generator was healthy (frames
+    advancing, no DMA restart).
+  - **The swing sags before it dies.** CH1 peak-to-peak fell over the
+    preceding ~6 s before 4 of 7 episodes (e.g. 1.39 → 1.08 V, 1.33 →
+    1.21 V). One stretch ran at ~0.24 V with sync still present. The
+    control held a steady 1.45–1.52 V. This looks like the output stage or
+    supply browning out (heat or capacitors?) rather than a sync-logic
+    lock-up. So far it has only started while the input is disturbed or
+    soon after.
 - **No proc amp.** Its output runs about 30 % below the AVT-8710's: gray
   bar 56 IRE (AVT 79), burst 38 (43), yellow chroma 58 (70).
 - **Lost fields** vary between runs: rode through up to 8 (then its own

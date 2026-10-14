@@ -222,6 +222,21 @@ measured.
 Slow tests capture longer automatically: S10/S11 1.3 s at 25 MS/s, X1 3.3 s
 at 12.5 MS/s.
 
+## Comparing suites
+
+Every `run_suite.py` run also saves its results to
+`reports/<time>_suite_<dut>.json`. `tools/compare_suites.py` lines several of
+them up test by test, which is useful for repeat runs on one TBC or for
+comparing TBCs:
+
+```
+python3 tools/compare_suites.py reports/*_suite_datavideo-tbc-1000.json --html reports/compare.html
+```
+
+It reports the lost-field tolerance of each suite, every dead-output episode
+(which test it started on, the test before it, how long it lasted, and where
+it recovered), and the tests whose verdict differs between suites.
+
 ## Dropout watch
 
 `tools/dropout_watch.py` checks whether a TBC's output **goes dead**: no video
@@ -319,6 +334,7 @@ rms line jitter.
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
 | `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data) |
 | `tools/html_report.py` | the optional HTML reports (suites and the dropout watch) |
+| `tools/compare_suites.py` | lines up several suites' results test by test; dead-output episodes |
 | `tools/dropout_watch.py` | samples the TBC output once a second through clean / input-loss / clean phases; dead-output episodes |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
