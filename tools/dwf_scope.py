@@ -5,7 +5,8 @@ settle after a range or offset change (see docs/bench-notes.md), so the
 settle clock starts when Scope is opened and only the first capture waits for
 it; callers can do other work (such as letting a TBC lock) in the meantime.
 
-Captures record both channels simultaneously and download raw 16-bit samples
+Captures record both channels simultaneously (or CH1 alone, channels=1, for
+single-channel rigs and scopes) and download raw 16-bit samples
 in chunks (a 64 M-sample capture as doubles would need 1 GB), with the
 raw -> volts scale fitted from a short double-precision read.
 """
@@ -20,7 +21,7 @@ SETTLE_S = 2.0  # input stage settling after a range/offset change
 
 
 class Scope:
-    def __init__(self, rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S):
+    def __init__(self, rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S, channels=2):
         self.h = c_int()
         dwf.FDwfDeviceOpen(c_int(-1), byref(self.h))
         if self.h.value == 0:
@@ -29,8 +30,9 @@ class Scope:
         dwf.FDwfAnalogInBufferSizeInfo(self.h, byref(bmin), byref(bmax))
         self.max_samples = bmax.value
         self.vrange = vrange
+        self.channels = channels
         for ch in (0, 1):
-            dwf.FDwfAnalogInChannelEnableSet(self.h, c_int(ch), c_int(1))
+            dwf.FDwfAnalogInChannelEnableSet(self.h, c_int(ch), c_int(int(ch < channels)))
             dwf.FDwfAnalogInChannelRangeSet(self.h, c_int(ch), c_double(vrange))
             dwf.FDwfAnalogInChannelOffsetSet(self.h, c_int(ch), c_double(0.0))
         dwf.FDwfAnalogInTriggerSourceSet(self.h, c_byte(0))  # free-running
@@ -44,7 +46,7 @@ class Scope:
         dwf.FDwfAnalogInBufferSizeSet(self.h, c_int(self.n))
 
     def capture(self):
-        """Returns dict(raw=int16[2, n], scale=[2], offset=[2], rate=float).
+        """Returns dict(raw=int16[channels, n], scale=[channels], offset=[channels], rate=float).
 
         volts = raw * scale[ch] + offset[ch]
         """
@@ -62,9 +64,10 @@ class Scope:
         real = c_double()
         dwf.FDwfAnalogInFrequencyGet(h, byref(real))
 
-        raw = np.empty((2, n), np.int16)
-        scale, offset = np.zeros(2), np.zeros(2)
-        for ch in (0, 1):
+        nch = self.channels
+        raw = np.empty((nch, n), np.int16)
+        scale, offset = np.zeros(nch), np.zeros(nch)
+        for ch in range(nch):
             for i in range(0, n, CHUNK):
                 m = min(CHUNK, n - i)
                 buf = (c_short * m)()
@@ -93,9 +96,9 @@ class Scope:
         self.close()
 
 
-def capture(rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S):
+def capture(rate=50e6, seconds=0.25, vrange=5.0, settle=SETTLE_S, channels=2):
     """One-shot capture (opens, settles, captures, closes)."""
-    with Scope(rate, seconds, vrange, settle) as s:
+    with Scope(rate, seconds, vrange, settle, channels) as s:
         return s.capture()
 
 

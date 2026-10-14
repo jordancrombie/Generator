@@ -270,6 +270,23 @@ def tile(k, v, u=""):
     return f'<div class="tile"><div class="k">{esc(k)}</div><div class="v">{esc(v)} <span class="u">{esc(u)}</span></div></div>'
 
 
+def input_badge(r):
+    """CH2: was the generator's output right (two-channel runs only)."""
+    i = r.get("input")
+    if i is None:
+        return '<span class="badge">CH1 only</span>'
+    if not i["present"] and r["test"]["id"] != "V1":
+        return '<span class="badge b-warn">no CH2 video</span>'
+    if not i["ok"]:
+        return f'<span class="badge b-bad" title="{esc("; ".join(i["issues"]))}">input wrong</span>'
+    return '<span class="badge b-ok">input ok</span>'
+
+
+def latency_text(r):
+    L = (r.get("input") or {}).get("latency")
+    return f"{L['median_ms']:.2f} ms" if L else "—"
+
+
 def run_card(r, idx, base=None):
     t, h, m = r["test"], r["h"], r["markers"]
     anchor = f"run-{idx}"
@@ -283,6 +300,17 @@ def run_card(r, idx, base=None):
         tile("Marker line after V-sync", f"{m['line_after_vsync']['median']:.0f}" if m.get("line_after_vsync") else "—",
              f"({m['line_after_vsync']['min']}–{m['line_after_vsync']['max']})" if m.get("line_after_vsync") else ""),
     ]
+    inp = r.get("input") or {}
+    if inp.get("latency"):
+        L = inp["latency"]
+        tiles.append(tile("Latency", f"{L['median_ms']:.2f}", f"ms ({L['fields']:.2f} fields)"))
+    if inp.get("rate_ppm") is not None:
+        tiles.append(tile("Output rate vs input", f"{inp['rate_ppm']:+.1f}", "ppm (0 = locked)"))
+    v = inp.get("vs_input")
+    if v:
+        g = lambda x: f"×{x:.2f}" if x is not None else "—"
+        tiles += [tile("Burst vs input", g(v["burst"])), tile("Chroma vs input", g(v["chroma"])),
+                  tile("Gray vs input", g(v["gray"])), tile("Hue vs input", f"{v['hue_deg']:+.1f}", "°")]
     pc = r.get("picture")
     if pc:
         tiles += [
@@ -314,7 +342,7 @@ def run_card(r, idx, base=None):
   <dl class="ideal"><dt>Ideal, line TBC</dt><dd>{esc(ideal.get('line_tbc', '—'))}</dd>
     <dt>Ideal, frame TBC</dt><dd>{esc(ideal.get('frame_tbc', '—'))}</dd></dl>
   <div class="tiles">{''.join(tiles)}</div>
-  <div>{fields_badge(r)} {sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)}</div>
+  <div>{fields_badge(r)} {sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)} {input_badge(r)}</div>
   {seq}
   {wave}
   <p class="cap">Run {esc(r['run'])} · {r['seconds']:.2f} s captured</p>
@@ -363,7 +391,8 @@ def write(results, path=None, title="TBC test report"):
             f'<td>{esc(params_text(t))}</td><td>{esc(targets_text(t))}</td><td>{fields_badge(r)}</td>'
             f'<td class="num">{jitter}</td>'
             f'<td>{sequence_badge(r)}{vpos_badge(r, base)}{dma_badge(r)}</td>'
-            f'{picture_cells(r)}<td class="num">{r["markers"]["decoded"]}</td></tr>')
+            f'{picture_cells(r)}<td class="num">{r["markers"]["decoded"]}</td>'
+            f'<td>{input_badge(r)}</td><td class="num">{latency_text(r)}</td></tr>')
     notes = f'<p class="note">{esc(dut["notes"])}</p>' if dut.get("notes") else ""
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -381,12 +410,12 @@ def write(results, path=None, title="TBC test report"):
   <span>colour <b>{esc(first['test'].get('chroma', '?'))}</b></span>
 </div>
 <p class="note">These are observations of the TBC's output, not grades. "Ideal" describes what a perfect
-TBC of each class would output for that test.</p>
+TBC of each class would output for that test. {"Input (CH2) is the generator's output, teed off before the TBC: it checks each run's input and gives the TBC's latency and its gain against the real input." if any(r.get("input") for r in results) else "Captured on CH1 only: picture figures are against nominal levels, and there is no input check or latency."}</p>
 {tolerance_html(results)}
 <h2>Summary</h2>
 <div class="scroll"><table>
 <thead><tr><th>Test</th><th>Rung</th><th>Parameters</th><th>Aimed at</th><th>Output fields</th><th>H jitter</th>
-<th>Frame sequence</th><th>Burst</th><th>Hue</th><th>Gray</th><th>Markers</th></tr></thead>
+<th>Frame sequence</th><th>Burst</th><th>Hue</th><th>Gray</th><th>Markers</th><th>Input (CH2)</th><th>Latency</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
 <h2>Runs</h2>
 {''.join(run_card(r, i, base) for i, r in enumerate(results))}

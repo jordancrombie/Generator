@@ -8,13 +8,13 @@ score how well the TBC repaired it.
 
 ![Test rig: the ESP32 feeds the TBC; CH2 records the generator output, CH1 the TBC output; the grader compares them](docs/rig.svg)
 
-The test catalog, scoring approach and grader contract are in the design doc,
-[TBC Test Catalog & Grader Contract](https://claude.ai/code/artifact/45d38c23-276f-4e00-b547-f803ce8926ae).
+The test catalog, scoring approach and grader contract are in
+[docs/design.md](docs/design.md).
 Measured hardware and toolchain facts (settling times, quirks, pitfalls) are in
 [docs/bench-notes.md](docs/bench-notes.md). Read it before changing the tools.
 Open work is in [TODO.md](TODO.md).
 
-## Status (2026-10-13)
+## Status (2026-10-14)
 
 | Area | State |
 |---|---|
@@ -25,9 +25,10 @@ Open work is in [TODO.md](TODO.md).
 | Fault tests (S10, S11, X1, V1) | **Built and verified.** Lost-field tolerance, a stress-and-recovery fault hunt for buggy units, and a no-signal capture of the TBC's own fallback output |
 | Device tagging and reports | **Done.** `--dut`/`--note` on every run; optional `--html` report |
 | Colour-under (VHS/Betamax) | **Default.** Direct colour (U-matic/1") available with `chroma follows` |
-| Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 |
-| CH2 reference and level calibration | **Waiting on hardware** (BNC tees and a 75 Ω terminator) |
-| Still to do | See [TODO.md](TODO.md): CH2 calibration, latency, H6 velocity error, the AVT-8710 fault hunt |
+| Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 and on the CH2 reference |
+| CH2 reference | **Done.** Every two-channel run checks its input, measures the TBC's latency and whether its output is locked to the input, and its gain against the real input |
+| One-channel rigs | **Supported.** `--channels 1` needs only CH1 (one scope channel, no tee) |
+| Still to do | See [TODO.md](TODO.md): generator level and chroma calibration, H6 velocity error, the AVT-8710 fault hunt |
 | Grader | Not part of this repo. `tools/perturb_model.py` is its reference for what was sent |
 
 ## Wiring
@@ -49,9 +50,30 @@ ESP32's DAC can push its output up but barely pull it down, so an open-ended
 run turns the 3.58 MHz chroma into a sawtooth (about 4× too small) and the
 picture goes dark and rolls.
 
-The default levels (`levels 0 73`) assume an unloaded output and still need
-calibrating on CH2. The target is 286 mV of sync and 714 mV of white above
-blanking.
+The default levels (`levels 0 73`) still need calibrating. The target is
+286 mV of sync and 714 mV of white above blanking. Measured on CH2 into the
+TBC's 75 Ω input: 226 mV of sync (79 %), with chroma and burst about 0.68× of
+nominal at 3.58 MHz.
+
+### Minimal rig: one scope channel
+
+Not everyone has a two-channel scope or spare tees. With `--channels 1` (or
+`TBC_CHANNELS=1`) the tools capture **CH1 only**:
+
+| From | To |
+|---|---|
+| ESP32 GPIO25 → 75 Ω series resistor → BNC | TBC input (its 75 Ω input terminates the run) |
+| TBC output | scope CH1, with a 75 Ω terminator (a tee, or a monitor's loop-through with termination on) |
+
+Everything still works: every output field is classified, the frame markers
+are decoded, and lost-field tolerance, the fault hunt and the dropout watch run
+as usual. A single-channel run can't check its own input, can't measure the
+TBC's latency, and judges picture levels against nominal values rather than
+the generator's real output. Reports label those runs "CH1 only". The dropout
+watch only ever uses CH1.
+
+With two channels, a run whose CH2 shows no video says so ("is the reference
+connected?") and is otherwise reported as single-channel.
 
 ## How it works
 
@@ -149,6 +171,7 @@ The host tools need `numpy` and `pyserial`.
 ```
 export TBC_DUT="AVT-8710"                         # name the device under test once per session
 export TBC_NOTE="composite in/out, controls at default"
+export TBC_CHANNELS=1                             # only if your rig has CH1 alone (see "Minimal rig")
 python3 tools/run_suite.py                      # smoke set: one rung of every test (~3 s each)
 python3 tools/run_suite.py --html               # ...plus an HTML report in reports/
 python3 tools/run_suite.py H1:all S7:4-5        # chosen tests and rungs on one scope session
@@ -159,7 +182,11 @@ python3 tools/verify_timing.py                  # check the firmware against the
 python3 tools/check_lines.py                    # check colour bars as rendered
 ```
 
-Every run prints `observe_tbc`'s report on the TBC output, records the
+Every run prints `observe_tbc`'s report on the TBC output. With two channels
+it adds the input check from CH2, the latency, the output's line rate against
+the input (0 ppm means locked; otherwise latency drifts and the TBC drops or
+repeats a frame when it wraps), and burst, chroma, gray and hue against the
+real input. Every run also records the
 device under test (`--dut`, or `$TBC_DUT`) and its settings (`--note`, or
 `$TBC_NOTE`) in the manifest, and stops with an error if the generator isn't
 advancing frames. `--html` (off by default) also writes a self-contained
@@ -168,9 +195,10 @@ each run, the ideal output per TBC class, key figures, a frame-sequence strip
 and one captured line. `reports/` is not committed. The capture is
 then **deleted by default**. With `--keep` (on `run_test.py` or
 `run_suite.py`), the run stays in `runs/<timestamp>_<test>_r<rung>/` as
-`manifest.json` plus `capture.npz` (raw int16 per channel, volts = raw ×
-scale + offset). A run whose report fails is always kept. Kept runs are
-large, 100 MB per 0.5 s at 50 MS/s, and `runs/` is not committed. Where the time goes is broken down in
+`manifest.json` plus `capture.npz` (raw int16 per channel captured,
+volts = raw × scale + offset). A run whose report fails is always kept. Kept
+runs are large, 50 MB per channel per 0.5 s at 50 MS/s, and `runs/` is not
+committed. Where the time goes is broken down in
 [docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
 ## Sample report
@@ -233,7 +261,8 @@ comparing TBCs:
 python3 tools/compare_suites.py reports/*_suite_datavideo-tbc-1000.json --html reports/compare.html
 ```
 
-It reports the lost-field tolerance of each suite, every dead-output episode
+It reports the lost-field tolerance, output sync depth and (with two
+channels) latency range of each suite, every dead-output episode
 (which test it started on, the test before it, how long it lasted, and where
 it recovered), and the tests whose verdict differs between suites.
 
@@ -284,8 +313,9 @@ skip those runs.
 
 ## First observations through the TBC
 
-These are observations from CH1 alone, not grades. The input side has not been
-measured yet.
+These are observations of a green AVT-8710 from CH1 alone, made before CH2
+was wired, not grades. The Datavideo TBC-1000's are in
+[docs/bench-notes.md](docs/bench-notes.md#datavideo-tbc-1000).
 
 | Test | What came out of the TBC |
 |---|---|
@@ -332,12 +362,13 @@ rms line jitter.
 | `tools/perturb_model.py` | reference model of perturbations, frame structure and marker |
 | `tools/run_suite.py`, `tools/run_test.py` | run many rungs on one scope session, or one rung |
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
-| `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data) |
+| `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data); with CH2, the input check, latency and gain against the input (`compare_input()`) |
 | `tools/html_report.py` | the optional HTML reports (suites and the dropout watch) |
-| `tools/compare_suites.py` | lines up several suites' results test by test; dead-output episodes |
+| `tools/compare_suites.py` | lines up several suites' results test by test; dead-output episodes, level and latency |
 | `tools/dropout_watch.py` | samples the TBC output once a second through clean / input-loss / clean phases; dead-output episodes |
 | `tools/verify_timing.py`, `tools/check_lines.py` | firmware verification over serial |
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
 | `tools/gen_cmd.py` | serial helpers (`BAUD`, `request`, `dump_line`) and a command-line sender |
 | `tools/dwf_list.py`, `tools/dwf_capture.py` | scope utilities |
+| `docs/design.md` | test catalog, signal conventions, scoring and the grader contract |
 | `docs/bench-notes.md` | measured hardware, toolchain and signal facts, open issues |

@@ -181,6 +181,18 @@ so runs are now deleted after their report unless `--keep` is given.
   with a power-cycle and didn't come back in 45 minutes. Either the
   test-switch artifact was a trigger, or the fault needs a longer warm or
   stressed run to appear.
+- **CH2 wired (2026-10-14): latency and lock.** The TBC-1000's output is
+  **not locked to its input**: its line period is 63555.05 ns against our
+  63556.45 ns, so it runs about +22 ppm fast. It behaves as a frame
+  synchroniser with its own clock. Latency was 9.1 ms (0.55 field) in one
+  session and 30.1 ms (1.8 fields) an hour later. Within a session it shrinks
+  by about 0.1 ms per run (22 ppm × ~4 s). Expect it to repeat a frame about
+  every 25 minutes when the delay wraps. Confirmed: latency fell from
+  30.1 ms to 25.0 ms over 217 s, a drift of 23 ppm.
+- **Gain against the real input (CH2):** luma ×0.64 (gray 53 IRE out for
+  82 in), burst brought up to ~38 IRE whatever comes in (×1.42 on our
+  27 IRE burst), chroma ×1.34 with it. So it has ACC keyed on the burst. With
+  a 6 IRE burst (C1 r3) chroma goes ×2.1 and hue shifts by 14°.
 - **No proc amp.** Its output runs about 30 % below the AVT-8710's: gray
   bar 56 IRE (AVT 79), burst 38 (43), yellow chroma 58 (70).
 - **Lost fields** vary between runs: rode through up to 8 (then its own
@@ -193,6 +205,17 @@ so runs are now deleted after their report unless `--keep` is given.
   level. Marker cells are now judged against each field's own framing cells.
 
 ## Measurement pitfalls
+
+- **Generator output on CH2** (tee at the TBC's 75 Ω input): sync 0.226 V
+  (79 % of 286 mV), burst 27 IRE p-p and yellow chroma 44 IRE p-p (both
+  about 0.68× nominal), gray bar 82 IRE. Line jitter floor 3.1 ns rms
+  (CH2's line-period jitter for H1 r4, 50 ns rms injected, reads 77 ns: a
+  period spans two independently jittered syncs, so expect √2 × 50 = 71 ns).
+- **Picture lines are picked relatively.** `picture_metrics` used to accept
+  only lines with the gray bar above 55 IRE. The TBC-1000's gray sits near
+  53, so most of its output was skipped and its picture figures were
+  missing or based on a few lines. Lines now qualify when gray is above
+  35 IRE and at least twice the blue bar.
 
 - **Sync slicing:** with full-size chroma, red and blue bars (down to
   −16 IRE) and the burst trough (−20 IRE) dip into a mid-level sync slicer.

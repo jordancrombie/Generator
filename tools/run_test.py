@@ -1,14 +1,20 @@
-"""Run one test rung on the generator, capture CH1/CH2 and report on it.
+"""Run one test rung on the generator, capture CH1 (and CH2) and report on it.
 
-usage: run_test.py TEST [RUNG] [--dut NAME] [--note TEXT] [--keep] [--html [PATH]]
-                   [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+usage: run_test.py TEST [RUNG] [--channels 1|2] [--dut NAME] [--note TEXT] [--keep]
+                   [--html [PATH]] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+
+--channels 2 (the default) captures CH1, the TBC's output, and CH2, the
+generator's output teed off before the TBC. CH2 checks that the input was
+right, measures the TBC's latency and its gain against the real input.
+--channels 1 (or $TBC_CHANNELS=1) needs only CH1: for single-channel scopes,
+or rigs without a tee. Pictures are then judged against nominal levels.
 
 --dut names the device under test (default $TBC_DUT) and --note records its
 settings (default $TBC_NOTE); both go into the manifest and reports.
 
 Each run is saved to DIR/<timestamp>_<test>_r<rung>/ containing
   manifest.json  the generator's manifest plus capture metadata
-  capture.npz    ch1, ch2 (int16 raw), scale, offset, rate
+  capture.npz    ch1 and, with two channels, ch2 (int16 raw), scale, offset, rate
 then observe_tbc's report is printed and the folder is deleted, unless
 --keep is given (or the report fails, so the run can be debugged). A capture
 is about 100 MB per 0.5 s at 50 MS/s.
@@ -37,6 +43,9 @@ def add_common_args(ap):
     """Options shared by run_test.py and run_suite.py."""
     ap.add_argument("--dut", default=os.environ.get("TBC_DUT", ""), help="device under test (default $TBC_DUT)")
     ap.add_argument("--note", default=os.environ.get("TBC_NOTE", ""), help="DUT settings etc. (default $TBC_NOTE)")
+    ap.add_argument("--channels", type=int, choices=(1, 2), default=int(os.environ.get("TBC_CHANNELS", 2)),
+                    help="2: CH1 = TBC output, CH2 = generator output (reference); "
+                         "1: CH1 only (default $TBC_CHANNELS, else 2)")
     ap.add_argument("--keep", action="store_true", help="keep the capture and manifest instead of deleting them")
     ap.add_argument("--html", nargs="?", const="auto", help="also write an HTML report (default reports/<time>_<dut>.html)")
     ap.add_argument("--seed", type=int, default=1)
@@ -93,7 +102,8 @@ def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None, timeba
               f"({after.get('dma_restart_last', '')}); part of it may be frozen output")
     manifest["capture"] = {
         "rate_hz": cap["rate"], "samples": int(cap["raw"].shape[1]),
-        "channels": {"ch1": "result (end of chain, after TBC)", "ch2": "reference (generator output)"},
+        "channels": {"ch1": "result (end of chain, after TBC)", "ch2": "reference (generator output)"}
+                    if cap["raw"].shape[0] > 1 else {"ch1": "result (end of chain, after TBC)"},
         "volts": "raw * scale + offset", "started_unix": t0, "frames_at_start": info["frames"],
         "dma_restarts_during": restarted,
     }
@@ -104,8 +114,8 @@ def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None, timeba
     os.makedirs(run, exist_ok=True)
     with open(os.path.join(run, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=1)
-    np.savez(os.path.join(run, "capture.npz"), ch1=cap["raw"][0], ch2=cap["raw"][1],
-             scale=cap["scale"], offset=cap["offset"], rate=cap["rate"])
+    chans = {f"ch{c + 1}": cap["raw"][c] for c in range(cap["raw"].shape[0])}
+    np.savez(os.path.join(run, "capture.npz"), **chans, scale=cap["scale"], offset=cap["offset"], rate=cap["rate"])
     return os.path.normpath(run), cap
 
 
@@ -140,10 +150,10 @@ def main():
     a = ap.parse_args()
     dut = dut_of(a)
 
-    with dwf_scope.Scope(a.rate, a.seconds) as scope:  # starts settling while the test starts
+    with dwf_scope.Scope(a.rate, a.seconds, channels=a.channels) as scope:  # settles while the test starts
         s = open_gen()
         run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out, dut, (a.rate, a.seconds))
-    for ch in (0, 1):
+    for ch in range(cap["raw"].shape[0]):
         v = dwf_scope.volts(cap, ch)
         print(f"ch{ch + 1}: {v.min():.3f} .. {v.max():.3f} V")
     write_html([finish(run, a.keep)], a.html)
