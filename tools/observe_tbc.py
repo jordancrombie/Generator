@@ -289,7 +289,8 @@ def analyze(run, ch=1):
     out = {"run": os.path.basename(os.path.normpath(run)), "channel": ch, "seconds": len(x) / fs,
            "test": man["test"], "ideal": man.get("ideal", {}), "dut": man.get("dut", {}),
            "generator": man.get("generator", {}),
-           "dma_restarts_during": man.get("capture", {}).get("dma_restarts_during", 0)}
+           "dma_restarts_during": man.get("capture", {}).get("dma_restarts_during", 0),
+           "started_unix": man.get("capture", {}).get("started_unix")}
 
     ft, w = sync_pulses(x, us)
     hs = ft[(w > 3.5) & (w < 6)]                      # horizontal syncs

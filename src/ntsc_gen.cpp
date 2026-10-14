@@ -34,7 +34,15 @@ struct Base { Half a, b; uint8_t phase; int16_t key; uint8_t mods; };
 
 static lldesc_t *s_ring;                 // [2 * HALF_CAP]
 static int s_count[2];                   // lines in each half
-static uint16_t *s_safe;                 // parking line while the pool is rebuilt
+// Parking frame while the pool is rebuilt: a standard black 525-line frame
+// with full vertical sync, so a test switch never shows the TBC an input
+// without V-sync (which can upset some TBCs; seen on a Datavideo TBC-1000).
+// One buffer per (half, half) combination of a black frame, x 2 burst phases.
+static constexpr int SAFE_KINDS = 7;
+static const Half SAFE_HALVES[SAFE_KINDS][2] = {
+    {H_EQ, H_EQ}, {H_VS, H_VS}, {H_EQ, H_VS}, {H_VS, H_EQ}, {H_EQ, H_BLANK}, {H_BLANK, H_BLANK}, {H_BLANK, H_EQ}};
+static uint16_t *s_safe_lines[SAFE_KINDS][2];
+static uint16_t *s_safe;                 // = the black blank line (BLANK, BLANK), phase 0
 static Base s_bases[MAX_BASES];
 // Base per NTSC line, [standard / the test's alternate rendering (alt_mods)]
 // [subcarrier phase 0 or 2 at line start].
@@ -224,15 +232,46 @@ static uint16_t *alloc_line() {
     return (uint16_t *)heap_caps_malloc(s_cap * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
 }
 
+static void render_safe_frame() {
+    for (int k = 0; k < SAFE_KINDS; k++)
+        for (int ph = 0; ph < 2; ph++)
+            render_line(s_safe_lines[k][ph], SAFE_CAP, SAFE_HALVES[k][0], SAFE_HALVES[k][1], 2 * ph,
+                        (float)LINE_ORIGIN, 0, nullptr, 0, s_levels);
+}
+
+// The parking buffer for NTSC line L: its own sync structure, picture black.
+static const uint16_t *safe_line(int L, int phase) {
+    LineSpec ls = line_spec(L);
+    Half a = ls.a == H_ACTIVE ? H_BLANK : ls.a, b = ls.b == H_ACTIVE ? H_BLANK : ls.b;
+    for (int k = 0; k < SAFE_KINDS; k++)
+        if (SAFE_HALVES[k][0] == a && SAFE_HALVES[k][1] == b) return s_safe_lines[k][phase >> 1];
+    return s_safe;
+}
+
+// Point both halves at a standard black frame. Descriptors past line 525
+// (left over from longer frames) also get a black line, so whatever path the
+// DMA is on, it only reads the parking buffers.
+static void park() {
+    for (int h = 0; h < 2; h++)
+        for (int i = 0; i < HALF_CAP; i++) {
+            lldesc_t &d = s_ring[h * HALF_CAP + i];
+            d.size = SAFE_CAP * 2;
+            d.length = SAMPLES_PER_LINE * 2;
+            if (i < LINES_PER_FRAME) {
+                d.buf = (const uint8_t *)safe_line(i + 1, (2 * (h * LINES_PER_FRAME + i)) & 3);
+                d.eof = i == LINES_PER_FRAME - 1;
+                d.empty = (uint32_t)(d.eof ? &s_ring[(1 - h) * HALF_CAP] : &s_ring[h * HALF_CAP + i + 1]);
+            } else {
+                d.buf = (const uint8_t *)s_safe;
+            }
+        }
+}
+
 // Rebuild everything for the current pattern/levels/test. The ring is parked
-// on the safe line meanwhile, so the output blanks for a moment.
+// on a black frame (with proper vertical sync) meanwhile.
 static bool rebuild() {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    for (int c = 0; c < 2 * HALF_CAP; c++) {  // links stay as they are
-        s_ring[c].size = SAFE_CAP * 2;
-        s_ring[c].length = SAMPLES_PER_LINE * 2;
-        s_ring[c].buf = (const uint8_t *)s_safe;
-    }
+    park();
     vTaskDelay(pdMS_TO_TICKS(80));  // let the DMA leave the old buffers
     free_pool();
 
@@ -323,6 +362,7 @@ static bool rebuild() {
     s_max_write_us = 0;
     write_half(0, s_start_frame);
     write_half(1, s_start_frame + 1);
+    render_safe_frame();  // levels may have changed; the ring no longer reads these
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -346,9 +386,12 @@ bool begin(int pattern, Levels lv) {
 
     s_lock = xSemaphoreCreateMutex();
     s_ring = (lldesc_t *)heap_caps_calloc(2 * HALF_CAP, sizeof(lldesc_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    s_safe = (uint16_t *)heap_caps_malloc(SAFE_CAP * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (!s_lock || !s_ring || !s_safe) return false;
-    render_line(s_safe, SAFE_CAP, H_BLANK, H_BLANK, 0, (float)LINE_ORIGIN, 0, nullptr, 0, s_levels);
+    if (!s_lock || !s_ring) return false;
+    for (auto &kind : s_safe_lines)
+        for (auto &b : kind)
+            if (!(b = (uint16_t *)heap_caps_malloc(SAFE_CAP * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL))) return false;
+    s_safe = s_safe_lines[5][0];
+    render_safe_frame();
     // Start as two standard 525-line halves on the safe line.
     for (int c = 0; c < 2 * HALF_CAP; c++) {
         lldesc_t &d = s_ring[c];

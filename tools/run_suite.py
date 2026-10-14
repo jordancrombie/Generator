@@ -11,7 +11,7 @@ lock time plus the capture. Each run is reported and then deleted, as in
 run_test.py; --keep keeps them (about 4 bytes x rate x seconds each, two
 int16 channels, so mind the disk with long suites).
 """
-import argparse, time
+import argparse, json, os, re, time
 
 import dwf_scope
 from gen_cmd import open_gen, request
@@ -31,6 +31,18 @@ def rungs_of(spec, catalog):
         lo, _, hi = part.partition("-")
         out += [(test, i) for i in range(int(lo), int(hi or lo) + 1)]
     return out
+
+
+def save_results(results, dut):
+    """Every run's analysis (minus the plotted waveform) as JSON, for compare_suites.py."""
+    reports = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reports")
+    os.makedirs(reports, exist_ok=True)
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", dut.get("name") or "dut").strip("-").lower()
+    path = os.path.join(reports, time.strftime("%Y%m%d-%H%M%S") + f"_suite_{slug}.json")
+    keep = [{k: v for k, v in r.items() if k != "excerpt"} for r in results if r]
+    with open(path, "w") as f:
+        json.dump({"dut": dut, "runs": keep}, f)
+    return os.path.normpath(path)
 
 
 def loss_tolerance(results, tid, key="handled"):
@@ -91,6 +103,8 @@ def main():
             results.append(finish(run, a.keep))
         request(s, "test V0", until="\n")
     print(f"done in {time.time() - t0:.1f} s")
+    path = save_results(results, dut)
+    print(f"results: {path}")
     for line in tolerance_lines(results):
         print(line)
     dead = [f"{r['test']['id']} r{r['test']['rung']}" for r in results if r and r.get("dead")]
