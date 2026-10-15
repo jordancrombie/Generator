@@ -34,7 +34,8 @@ Open work is in [TODO.md](TODO.md).
 | CH2 reference | Done | Every two-channel run checks its input, and measures the TBC's latency, whether its output is locked to the input, and its gain against the real input |
 | One-channel rigs | Supported | `--channels 1` needs only CH1 (one scope channel, no tee) |
 | Grader | Provisional | `tools/grade.py` (or `run_suite.py --grade`) grades every run, each test and the whole field trial. Thresholds not yet checked against a known-good TBC |
-| Fingerprinting and identification | Planned | A fingerprint per TBC from several field trials, then identifying a TBC against a library |
+| Fingerprinting | Done | `tools/fingerprint.py` builds a fingerprint from several field trials; `fingerprints/` holds the library (TBC-1000 so far) |
+| Identification | Planned | Matching an unknown TBC against the fingerprint library |
 | Rig calibration | In progress | CH2 wired; generator levels and chroma roll-off still to calibrate, CH1 to terminate |
 
 Open work is in [TODO.md](TODO.md).
@@ -344,6 +345,48 @@ residual horizontal displacement is judged as the excess over the trial's
 V0 run, which sets the measurement floor. So include V0 in every graded
 trial (the default set does).
 
+## Fingerprints
+
+A fingerprint describes how a TBC behaves, built from several field trials of
+one unit:
+
+```
+python3 tools/fingerprint.py reports/<t1>_suite_<dut>.json reports/<t2>_suite_<dut>.json ... --save --html
+```
+
+Its traits come in three kinds:
+- **Model traits** are behaviours that should hold for every unit of a
+  model. Examples: whether the output locks to its input or free-runs; what
+  it shows with no signal; how many lost fields it rides through; colour
+  killer; ACC; whether it corrects random line jitter, head-switch skew or
+  slow timing; what it does with 240p, with no V-sync, with hum, and with
+  level changes.
+- **Unit traits** are measurements that may differ between units of one
+  model: clock offset against the input, latency range, luma gain,
+  saturation, hue offset, output burst, jitter floor, noise.
+- **Rig-dependent** figures, such as output level in volts, are recorded
+  but won't be used to match.
+
+Each trait records how many trials agreed. Tests whose verdict varies
+between trials are listed as rates ("S8 r5 failed in 4 of 6"), because a
+single verdict would be misleading. Use 3 or more two-channel trials of the
+same unit.
+
+`--save` writes `fingerprints/<name>.json`. That folder is committed: it is
+the library that identification will match unknown TBCs against.
+`--html` writes a readable trait card to `reports/`.
+
+The first fingerprint, `fingerprints/datavideo-tbc-1000.json`, comes from 6
+field trials:
+- free-running output (+22.1 ppm);
+- black with no input;
+- rides through ∞ lost fields, blanking the gap;
+- has a colour killer and partial ACC;
+- **doesn't** correct random line jitter, head-switch skew or chroma phase,
+  but **does** correct slow timing errors;
+- converts 240p to standard fields;
+- luma gain ×0.63.
+
 ## Comparing field trials
 
 Every field trial (`run_suite.py` run) also saves its results to
@@ -458,6 +501,8 @@ rms line jitter.
 | `tools/dwf_scope.py` | ADP2230 capture (`Scope` stays open; inputs settle once) |
 | `tools/observe_tbc.py` | TBC output report from a run (`analyze()` returns it as data); with CH2, the input check, latency and gain against the input (`compare_input()`) |
 | `tools/html_report.py` | the optional HTML reports (suites and the dropout watch) |
+| `tools/fingerprint.py` | builds a TBC's fingerprint (model traits, unit traits, variable behaviours) from several field trials |
+| `fingerprints/` | the fingerprint library, one JSON per unit or model |
 | `tools/grade.py` | grades a field trial: per run, per test and overall (provisional thresholds) |
 | `tools/compare_suites.py` | lines up several suites' results test by test; dead-output episodes, level and latency |
 | `tools/dropout_watch.py` | samples the TBC output once a second through clean / input-loss / clean phases; dead-output episodes |

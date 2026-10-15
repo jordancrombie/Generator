@@ -99,5 +99,10 @@ order. Measured facts and open issues live in
 - [ ] Lower the displacement floor (~11 ns on CH1, ~20 ns on CH2: scope noise):
       terminate CH1 and recheck; average over more of the line; a smaller
       scope range.
-- [ ] Fingerprint per TBC from several field trials, then identify a TBC
-      against a library of fingerprints.
+- [x] Fingerprint per TBC from several field trials (`tools/fingerprint.py`,
+      `fingerprints/`; TBC-1000 from 6 trials, 2026-10-14).
+- [ ] Identify an unknown TBC against the fingerprint library: model traits
+      first, then unit traits to tell units apart. Needs a second model in
+      the library.
+- [ ] Re-run the AVT-8710 (green) with CH2 and build its fingerprint; then
+      a black AVT-8710, to see if model traits hold across units.
