@@ -270,6 +270,22 @@ runs are large, 50 MB per channel per 0.5 s at 50 MS/s, and `runs/` is not
 committed. Where the time goes is broken down in
 [docs/bench-notes.md](docs/bench-notes.md#where-test-run-time-goes).
 
+## Title card
+
+For photos and posts, the generator can show a TBT title card: **TBT** in
+large letters, *TIME BASE TORTURE* and *VIDEO ARCHIVE PROJECT* beneath, and a
+slim strip of colour bars. It is never part of a test.
+
+```
+python3 tools/run_suite.py --title --html          # 5 s of title card, then the field trial
+python3 tools/run_test.py V0 --title 10             # 10 s of title card before one rung
+python3 tools/gen_cmd.py "p title"                  # leave it up (until the next run)
+```
+
+Nothing is captured while it shows. Every run also switches the generator
+back to the test pattern before testing, so a title card left up never
+ends up in the results.
+
 ## Sample report
 
 [docs/sample-report.html](docs/sample-report.html) is a full `--html` report
@@ -437,7 +453,7 @@ skip those runs.
 | `test <id> [rung] [seed] [start_frame]` | start a test; `test V0` is the clean baseline. `start_frame` begins at a given frame (e.g. inside a loss or stress window) |
 | `chroma [under\|follows]` | colour-under (default, VHS/Betamax) or direct colour |
 | `manifest` | the current run's manifest, one JSON line |
-| `list` / `p <n\|name>` | list or select pattern: `smpte_bars`, `eia_bars_75`, `staircase`, `flat`, `crosshatch`, `black` |
+| `list` / `p <n\|name>` | list or select pattern: `smpte_bars`, `eia_bars_75`, `staircase`, `flat`, `crosshatch`, `black`, `title` (the title card) |
 | `flat <ire>` | flat field at the given IRE level |
 | `levels <sync> <white>` | DAC codes for −40 and 100 IRE |
 | `ppm <x>` | trim the sample clock (1.8 ppm steps), e.g. to correct crystal error |

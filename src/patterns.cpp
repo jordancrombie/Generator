@@ -1,6 +1,7 @@
 #include "patterns.h"
 #include "ntsc_timing.h"
 #include <math.h>
+#include <string.h>
 
 using namespace ntsc;
 
@@ -114,6 +115,73 @@ static int xhatch_segs(int key, Segment *o, int max) {
 // ---- Black (sync, burst and setup only) --------------------------------------
 static int black_segs(int, Segment *o, int) { o[0] = luma(0, 1, IRE_SETUP); return 1; }
 
+// ---- Title card: not a test pattern ----------------------------------------
+// The TBT title, for photos and posts. Only shown on request (`p title`, or the
+// host tools' --title flag before a field trial); never used by a test.
+// Text is a 5x7 block font scaled to square pixels on the 4:3 picture.
+struct Glyph { char c; uint8_t rows[7]; };   // 5 bits per row, MSB = leftmost
+static const Glyph FONT[] = {                // just the letters the title uses
+    {'A', {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}}, {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
+    {'C', {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}}, {'D', {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}},
+    {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}}, {'H', {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
+    {'I', {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}}, {'J', {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C}},
+    {'M', {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}}, {'O', {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
+    {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}}, {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
+    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}}, {'T', {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}}, {'V', {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}},
+};
+static uint8_t glyph_row(char c, int r) {
+    for (const Glyph &g : FONT)
+        if (g.c == c) return g.rows[r];
+    return 0;  // space, or a letter the font doesn't have
+}
+
+struct TitleLine { const char *text; int top; int px; float ire; };  // px: picture rows per font pixel
+static const TitleLine TITLE[] = {
+    {"TBT", 56, 24, 100.0f},
+    {"TIME BASE TORTURE", 256, 5, 80.0f},
+    {"VIDEO ARCHIVE PROJECT", 322, 4, 60.0f},
+};
+static const int NUM_TITLE = sizeof(TITLE) / sizeof(TITLE[0]);
+static const int TITLE_BARS_TOP = 400, TITLE_BARS_ROWS = 24;  // a slim strip of colour bars
+
+// Keys: 0 black, 1 the bar strip, 2 + 8 * line + font row for text.
+static int title_key(int row) {
+    for (int i = 0; i < NUM_TITLE; i++) {
+        int r = row - TITLE[i].top;
+        if (r >= 0 && r < 7 * TITLE[i].px) return 2 + 8 * i + r / TITLE[i].px;
+    }
+    if (row >= TITLE_BARS_TOP && row < TITLE_BARS_TOP + TITLE_BARS_ROWS) return 1;
+    return 0;
+}
+static int title_segs(int key, Segment *o, int max) {
+    if (key == 1) {
+        const float x0 = 0.15f, w = 0.7f / 7.0f;
+        int n = 0;
+        o[n++] = luma(0, x0, IRE_SETUP);
+        for (int i = 0; i < 7; i++) o[n++] = rgb(x0 + i * w, x0 + (i + 1) * w, BARS75[i][0], BARS75[i][1], BARS75[i][2]);
+        o[n++] = luma(x0 + 7 * w, 1, IRE_SETUP);
+        return n;
+    }
+    o[0] = luma(0, 1, IRE_SETUP);  // black background; text runs add to it
+    if (key < 2) return 1;
+    const TitleLine &L = TITLE[(key - 2) / 8];
+    const int r = (key - 2) % 8;
+    const float pw = L.px * 0.75f / ACTIVE_ROWS;  // a square font pixel, as a fraction of the width
+    const int len = (int)strlen(L.text), cols = 6 * len - 1;
+    const float left = 0.5f - 0.5f * cols * pw;
+    int n = 1, run = -1;
+    for (int c = 0; c <= cols && n < max; c++) {  // one segment per run of lit pixels
+        bool lit = c < cols && (c % 6) < 5 && (glyph_row(L.text[c / 6], r) >> (4 - c % 6) & 1);
+        if (lit && run < 0) run = c;
+        if (!lit && run >= 0) {
+            o[n++] = luma(left + run * pw, left + c * pw, L.ire - (float)IRE_SETUP);
+            run = -1;
+        }
+    }
+    return n;
+}
+
 const Pattern PATTERNS[] = {
     {"smpte_bars", smpte_key, smpte_segs},
     {"eia_bars_75", one_key, eia_segs},
@@ -121,5 +189,6 @@ const Pattern PATTERNS[] = {
     {"flat", one_key, flat_segs},
     {"crosshatch", xhatch_key, xhatch_segs},
     {"black", one_key, black_segs},
+    {"title", title_key, title_segs},
 };
 const int NUM_PATTERNS = sizeof(PATTERNS) / sizeof(PATTERNS[0]);
