@@ -381,10 +381,11 @@ model the firmware renders from.
 5. **Phase 4, fault tests (done 2026-10-13/14):** S10, S11, V1 and X1, the
    dropout watch, suite comparison, CH2 input check and latency,
    single-channel mode.
-6. **Phase 5, grading (started 2026-10-14):** `grade.py` with provisional
-   thresholds and picture displacement. Next: a fingerprint per TBC from
-   several field trials, then identifying a TBC against a library of
-   fingerprints.
+6. **Phase 5, grading and fingerprints (2026-10-14):** `grade.py` with
+   provisional thresholds and picture displacement; `fingerprint.py` and the
+   `fingerprints/` library (Datavideo TBC-1000 first). Next: identifying an
+   unknown TBC against the library, which needs a second model in it (the
+   AVT-8710, re-run with CH2).
 7. **Later:** H6 velocity error, and a tape program mode
    that steps through rungs on a timed schedule for recording test tapes,
    for tape-based TBCs with no passthrough.
