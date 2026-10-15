@@ -1,7 +1,8 @@
 """A field trial: run several test rungs on one scope session and report on each.
 
 usage: run_suite.py [SPEC ...] [--channels 1|2] [--grade [--class frame|line]] [--dut NAME]
-                    [--note TEXT] [--keep] [--html [PATH]] [--rate HZ] [--seconds S] [--settle S]
+                    [--note TEXT] [--keep] [--html [PATH]] [--title [SECONDS]] [--rate HZ] [--seconds S]
+                    [--settle S]
 
 SPEC is TEST:RUNGS, e.g. H1:1-6, S7:4, H5:1,3,5 or H2:all.
 With no SPEC, runs the smoke set: one representative rung of every test.
@@ -19,7 +20,7 @@ import argparse, json, os, re, time
 import dwf_scope
 import perturb_model as pm
 from gen_cmd import open_gen, request
-from run_test import add_common_args, dut_of, finish, run_one, write_html
+from run_test import add_common_args, dut_of, finish, prepare, run_one, write_html
 
 SMOKE = ["V0:1", "H1:4", "H2:3", "H3:5", "H4:5", "H5:4", "F1:3", "F2:5", "F3:2",
          "S1:5", "S2:3", "S3:5", "S4:3", "S4:6", "S5:1", "S6:5", "S6:6", "S7:4", "S8:5", "S9:4",
@@ -116,6 +117,7 @@ def main():
     t0 = time.time()
     with dwf_scope.Scope(a.rate, a.seconds, channels=a.channels) as scope:
         s = open_gen()
+        prepare(s, a.title)
         # Rung counts from the firmware's catalog: "  H1  random line jitter  rms_ns: 5 10 20 ..."
         catalog = {}
         for line in request(s, "tests").splitlines():

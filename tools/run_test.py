@@ -1,7 +1,10 @@
 """Run one test rung on the generator, capture CH1 (and CH2) and report on it.
 
 usage: run_test.py TEST [RUNG] [--channels 1|2] [--dut NAME] [--note TEXT] [--keep]
-                   [--html [PATH]] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+                   [--html [PATH]] [--title [SECONDS]] [--seed N] [--rate HZ] [--seconds S] [--out DIR]
+
+--title shows the TBT title card on the generator first (5 s by default),
+for photos. It is never part of a test and nothing is captured while it shows.
 
 --channels 2 (the default) captures CH1, the TBC's output, and CH2, the
 generator's output teed off before the TBC. CH2 checks that the input was
@@ -46,6 +49,8 @@ def add_common_args(ap):
     ap.add_argument("--channels", type=int, choices=(1, 2), default=int(os.environ.get("TBC_CHANNELS", 2)),
                     help="2: CH1 = TBC output, CH2 = generator output (reference); "
                          "1: CH1 only (default $TBC_CHANNELS, else 2)")
+    ap.add_argument("--title", nargs="?", type=float, const=5.0, metavar="SECONDS",
+                    help="show the TBT title card first (default 5 s); for photos, never part of a test")
     ap.add_argument("--keep", action="store_true", help="keep the capture and manifest instead of deleting them")
     ap.add_argument("--html", nargs="?", const="auto", help="also write an HTML report (default reports/<time>_<dut>.html)")
     ap.add_argument("--seed", type=int, default=1)
@@ -71,6 +76,20 @@ def ask_json(s, cmd, until, tries=3):
         except ValueError:
             if attempt == tries - 1:
                 raise RuntimeError(f"no valid JSON from '{cmd}' after {tries} tries: {reply[:200]!r}")
+
+
+def prepare(s, title=None):
+    """Before any test: optionally show the title card, and make sure the
+    generator is on the test pattern (the title card is never tested)."""
+    pattern = ask_json(s, "info", "}\n").get("pattern")
+    if title:
+        if "ok" not in request(s, "p title", until="\n", timeout=10):
+            raise RuntimeError("generator refused 'p title' (firmware without the title card?)")
+        print(f"title card for {title:g} s")
+        time.sleep(title)
+    if title or pattern == "title":
+        restore = pattern if pattern not in (None, "title") else "smpte_bars"
+        request(s, f"p {restore}", until="\n", timeout=10)
 
 
 def run_one(s, scope, test, rung, seed=1, settle=2.0, out=RUNS, dut=None, timebase=None):
@@ -152,6 +171,7 @@ def main():
 
     with dwf_scope.Scope(a.rate, a.seconds, channels=a.channels) as scope:  # settles while the test starts
         s = open_gen()
+        prepare(s, a.title)
         run, cap = run_one(s, scope, a.test, a.rung, a.seed, a.settle, a.out, dut, (a.rate, a.seconds))
     for ch in range(cap["raw"].shape[0]):
         v = dwf_scope.volts(cap, ch)
