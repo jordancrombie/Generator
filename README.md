@@ -397,16 +397,21 @@ same unit.
 the library that identification will match unknown TBCs against.
 `--html` writes a readable trait card to `reports/`.
 
-The first fingerprint, `fingerprints/datavideo-tbc-1000.json`, comes from 6
-field trials:
-- free-running output (+22.1 ppm);
-- black with no input;
-- rides through ∞ lost fields, blanking the gap;
-- has a colour killer and partial ACC;
-- **doesn't** correct random line jitter, head-switch skew or chroma phase,
-  but **does** correct slow timing errors;
-- converts 240p to standard fields;
-- luma gain ×0.63.
+The library holds two TBCs so far. They share most behaviours: both
+free-run, and both correct slow timing errors but not random line jitter,
+head-switch skew or chroma phase. They differ where it counts:
+
+| Trait | Datavideo TBC-1000 (6 trials) | AVT-8710, green (3 trials) |
+|---|---|---|
+| With no input at all | black | **its own colour bars** |
+| Lost fields ridden through | ∞ (more than 10) | **6**, then its own bars at 7 |
+| Colour killer (no burst) | yes | **no** |
+| Output line rate vs input | +22.1 ppm | +12.4 ppm |
+| Luma gain | ×0.63 | ×0.99 |
+| Saturation (chroma/burst) | ×0.94 | ×0.99 |
+| Output burst | 38 IRE p-p | 43 IRE p-p |
+| Output H jitter | 0.87 ns rms | 0.42 ns rms |
+| Field-trial score (provisional) | 50–53 | 42–44 |
 
 ## Comparing field trials
 

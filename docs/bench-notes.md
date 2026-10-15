@@ -113,6 +113,26 @@ so runs are now deleted after their report unless `--keep` is given.
 
 ## AVT-8710
 
+- **Fingerprint series, 2026-10-15** (green unit, CH2 wired, single
+  termination; `reports/20261015-11*_suite_avt-8710-green.json`,
+  `fingerprints/avt-8710-green.json`): 3 graded field trials, scores
+  44 / 42 / 43.
+  - **Output free-runs** at +12.4 ppm against its input (12.38–12.54), so
+    latency drifts (1–31 ms seen).
+  - **Picture accuracy:** luma ×0.99, saturation ×0.985, hue −1.6°, output
+    burst 42.8 IRE. Much closer to its input than the TBC-1000.
+  - **Output H jitter:** 0.42 ns rms, half the TBC-1000's.
+  - **Lost fields:** 6, falling back to its own bars at 7, as on
+    2026-10-13. One trial held on through 7.
+  - **Timing:** like the TBC-1000, it corrects slow timing (H2, H3, F1) but
+    **not** random line jitter (−1.3 dB at 50 ns rms), head-switch skew or
+    chroma phase. The 13 Oct estimate of "23 ns residual at 50 ns in" came
+    from a cruder measure.
+- **Double termination check:** the first V0 of the session showed CH2 at
+  0.45 V p-p instead of 0.87 V, because a second 75 Ω load was on the
+  generator's line. Fixed before the trials. CH2's level now flags this at
+  a glance: generator sync should read about 0.23 V.
+
 - **Its fallback output (no input)** is 8 full-field bars at 100 % white
   (100, 69, 56, 48, 36, 28, 16, 7.5 IRE). The yellow bar's hue matches ours
   (~165°), so a bar-shape check alone can be fooled; our frame marker can't

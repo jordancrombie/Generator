@@ -104,5 +104,7 @@ order. Measured facts and open issues live in
 - [ ] Identify an unknown TBC against the fingerprint library: model traits
       first, then unit traits to tell units apart. Needs a second model in
       the library.
-- [ ] Re-run the AVT-8710 (green) with CH2 and build its fingerprint; then
-      a black AVT-8710, to see if model traits hold across units.
+- [x] Re-run the AVT-8710 (green) with CH2 and build its fingerprint
+      (2026-10-15, 3 trials).
+- [ ] A black AVT-8710 (or a second TBC-1000), to see if model traits hold
+      across units.
