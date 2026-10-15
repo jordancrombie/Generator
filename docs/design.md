@@ -60,7 +60,7 @@ perturbation is stated as a change from that.
 
 ## Test catalog
 
-The catalog has 30 tests in 7 groups. Each test is tagged with the TBC class it
+The catalog has 30 tests in 7 groups. [tests.md](tests.md) describes each one in plain words, with every rung. Each test is tagged with the TBC class it
 targets: line TBC, frame TBC/synchroniser, or both. Its manifest gives the
 ideal output per class, so a line TBC that rightly passes a dropped field
 through is not marked down. Each test sweeps one parameter up a severity
@@ -76,7 +76,7 @@ live catalog. If this table and the firmware ever disagree, the firmware
 | H2 | Sinusoidal jitter (wow/flutter) | peak ns @ Hz | 50 ns @ 1 Hz … 2 µs @ 30 Hz, 6 rungs | As H1 at every rate |
 | H3 | Timing step | µs, toggling every 0.5 s | 0.25, 0.5, 1, 2, 5 | Picture stays put; recovers within N lines (measured) |
 | H4 | Head-switch skew | µs, lines 520–256 shifted until V-sync | 0.5, 1, 2, 5, 10 | No bend at the bottom of the picture |
-| H5 | Displaced single line | samples, at lines 100 and 362 | ±2, ±4, ±10, ±20 | No tear; following lines unaffected |
+| H5 | Displaced single line | samples, at lines 100 and 362 | +2, −2, +4, −4, +10, −10, +20, −20 (8 rungs) | No tear; following lines unaffected |
 
 H6, velocity error (timing that drifts *within* a line), is deferred to the
 tape-deck phase. It needs pre-stretched line copies.
@@ -85,8 +85,8 @@ tape-deck phase. It needs pre-stretched line copies.
 
 | ID | Test | Parameter | Ladder | Ideal TBC output |
 |---|---|---|---|---|
-| F1 | Line and subcarrier offset together | ppm (APLL retune) | ±10, ±30, ±100, ±300, ±1000 | Locks; output at nominal rate if genlocked |
-| F2 | fH not locked to fsc | H rate against a fixed subcarrier, ppm (SCH drifts) | ±10, ±50, ±200, ±1000 | Correct hue; no SCH drift on output |
+| F1 | Line and subcarrier offset together | ppm (APLL retune) | +10, −10, +30, −30 … +1000, −1000 (10 rungs) | Locks; output at nominal rate if genlocked |
+| F2 | fH not locked to fsc | H rate against a fixed subcarrier, ppm (SCH drifts) | +10, −10, +50, −50 … +1000, −1000 (8 rungs) | Correct hue; no SCH drift on output |
 | F3 | Slow frequency drift | peak ppm over a 10 s period | 50, 300, 1000 | Continuous lock |
 
 F2 and F3 are done in the timing model, not by retuning the clock.

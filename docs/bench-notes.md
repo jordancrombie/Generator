@@ -181,6 +181,20 @@ so runs are now deleted after their report unless `--keep` is given.
   with a power-cycle and didn't come back in 45 minutes. Either the
   test-switch artifact was a trigger, or the fault needs a longer warm or
   stressed run to appear.
+- **Heat series, 2026-10-14 19:30–20:16** (unit moved to a cooler spot):
+  five graded field trials back to back, 355 runs in 46 minutes. **No dead
+  output.** Comparison: `reports/20261014-heat5_compare_*`.
+  - **Scores:** 53, 52, 50, 53, 51. Only 5 of 71 verdicts varied between
+    trials: frame-sequence events on S5 r1, S6 r5/r6 and S8 r5, and S10 r2's
+    garbled recovery field. Lost-field tolerance was ∞ / ∞ every time.
+  - **Output sync depth:** a steady 0.491 V in every trial (min 0.487).
+    Last night, before the unit died, it ran at 0.42–0.43 V. Cooler and
+    healthier, or a wiring difference: worth watching.
+  - **Latency** covered the whole 0–2 field range within a single trial. The
+    delay drifts with the free-running clock and wraps, as predicted.
+  - So far this fits the heat theory: it died warm and in its old spot, and
+    survived 46 minutes of continuous testing after being moved. It isn't
+    proof. A long run with the unit deliberately warmed would test it.
 - **First graded field trial** (2026-10-14, after a power-cycle;
   `reports/20261014-192342_suite_*`, report `20261014-192558_*`):
   51 / 100, provisional.

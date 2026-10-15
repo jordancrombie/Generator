@@ -12,28 +12,32 @@ twice over, since many of the tests drop, cut or snow fields.
 
 ![Test rig: the ESP32 feeds the TBC; CH2 records the generator output, CH1 the TBC output; the grader compares them](docs/rig.svg)
 
-The test catalog, scoring approach and grader contract are in
-[docs/design.md](docs/design.md).
+What each test does, in plain words and with every rung, is in
+[docs/tests.md](docs/tests.md). The test catalog, scoring and grader contract
+are in [docs/design.md](docs/design.md).
 Measured hardware and toolchain facts (settling times, quirks, pitfalls) are in
 [docs/bench-notes.md](docs/bench-notes.md). Read it before changing the tools.
 Open work is in [TODO.md](TODO.md).
 
 ## Status (2026-10-14)
 
-| Area | State |
-|---|---|
-| Colour bars, first light | **Done.** SMPTE and EIA bars, staircase, flat, crosshatch. Hue within 1.5° and luma within 0.5 IRE at the DAC |
-| Timing tests (H1–H5, F1–F3) | **Built and verified** against the reference model. F1 not yet measured on the scope |
-| Structure tests (S1–S9) | **Built and verified**; observed through the TBC on CH1. S4, S8 and S9 target frame synchronisers |
-| Colour and level tests (C1–C4, L1–L4) | **Built and verified**; observed through the TBC on CH1, with picture metrics (burst, hue, saturation, level, noise, hum) |
-| Fault tests (S10, S11, X1, V1) | **Built and verified.** Lost-field tolerance, a stress-and-recovery fault hunt for buggy units, and a no-signal capture of the TBC's own fallback output |
-| Device tagging and reports | **Done.** `--dut`/`--note` on every run; optional `--html` report |
-| Colour-under (VHS/Betamax) | **Default.** Direct colour (U-matic/1") available with `chroma follows` |
-| Frame marker, manifest, capture runner | **Done.** The marker decodes through the TBC on CH1 and on the CH2 reference |
-| CH2 reference | **Done.** Every two-channel run checks its input, measures the TBC's latency and whether its output is locked to the input, and its gain against the real input |
-| One-channel rigs | **Supported.** `--channels 1` needs only CH1 (one scope channel, no tee) |
-| Still to do | See [TODO.md](TODO.md): generator level and chroma calibration, H6 velocity error, the AVT-8710 fault hunt |
-| Grader | **Provisional.** `tools/grade.py` (or `run_suite.py --grade`) grades every run, each test and the whole field trial. Thresholds not yet checked against a known-good TBC |
+| Area | State | Details |
+|---|---|---|
+| Colour bars, first light | Done | SMPTE and EIA bars, staircase, flat, crosshatch. Hue within 1.5° and luma within 0.5 IRE at the DAC |
+| Timing tests (H1–H5, F1–F3) | Done | Verified against the reference model. F1 not yet measured on the scope |
+| Structure tests (S1–S9) | Done | Verified, and observed through two TBCs. S4, S8 and S9 target frame synchronisers |
+| Colour and level tests (C1–C4, L1–L4) | Done | Verified, with picture metrics (burst, hue, saturation, level, noise, hum) |
+| Fault tests (S10, S11, X1, V1) | Done | Lost-field tolerance, a stress-and-recovery fault hunt for buggy units, and a no-signal capture of the TBC's own fallback output |
+| Colour-under (VHS/Betamax) | Default | Direct colour (U-matic/1") available with `chroma follows` |
+| Frame marker, manifest, capture runner | Done | The marker decodes through the TBC on CH1 and on the CH2 reference |
+| Device tagging and reports | Done | `--dut`/`--note` on every run; optional `--html` report |
+| CH2 reference | Done | Every two-channel run checks its input, and measures the TBC's latency, whether its output is locked to the input, and its gain against the real input |
+| One-channel rigs | Supported | `--channels 1` needs only CH1 (one scope channel, no tee) |
+| Grader | Provisional | `tools/grade.py` (or `run_suite.py --grade`) grades every run, each test and the whole field trial. Thresholds not yet checked against a known-good TBC |
+| Fingerprinting and identification | Planned | A fingerprint per TBC from several field trials, then identifying a TBC against a library |
+| Rig calibration | In progress | CH2 wired; generator levels and chroma roll-off still to calibrate, CH1 to terminate |
+
+Open work is in [TODO.md](TODO.md).
 
 ## Wiring
 
@@ -79,6 +83,64 @@ watch only ever uses CH1.
 With two channels, a run whose CH2 shows no video says so ("is the reference
 connected?") and is otherwise reported as single-channel.
 
+## Which microcontroller?
+
+**You need an original ("classic") ESP32,** the chip on most ESP32-WROOM-32
+and ESP32-DevKitC boards. `esptool chip-id` reports it as `ESP32-D0WD…`
+(or `ESP32-D0WDQ6…` on older boards). The firmware builds for PlatformIO's `esp32dev`
+board. Cheap ESP32 dev boards usually have this chip, but check: the newer
+family members won't work.
+
+| Chip | Works? | Why |
+|---|---|---|
+| ESP32 (classic: D0WD, D0WDQ6, PICO-D4, WROOM-32, WROVER) | **Yes** | 8-bit DACs on GPIO25/26, and I2S0 can stream DMA straight into the DAC ("built-in DAC mode"), clocked from the audio PLL |
+| ESP32-S2 | No (not without a port) | Has DACs, but not the I2S-to-DAC path this firmware uses |
+| ESP32-S3, C3, C5, C6, H2, P4 | No | No DAC at all |
+
+**Why it's special.** A composite video signal needs about 14.3 million
+samples a second, every one on time, for as long as the test runs. No CPU can
+write a DAC that fast by hand, so the samples have to stream by DMA. The
+classic ESP32 has a rare combination:
+- **DMA straight into its own DAC.** I2S0 in "LCD/DAC mode" feeds the 8-bit
+  DAC directly, with no external parts.
+- **A tunable audio PLL (APLL),** which sets the sample clock to exactly
+  4 × the colour subcarrier (14.318182 MHz) and can trim it in ~2 ppm steps.
+  An exact subcarrier is what makes the colours right.
+- **Linked-list DMA descriptors with their own lengths.** Each line plays from
+  a buffer through its own descriptor. Changing a descriptor's length moves
+  the next line's sync, which is how TBT creates timing faults without
+  re-rendering anything.
+- **Enough RAM** for two frames of DMA descriptors and a pool of
+  pre-rendered lines (each line is 1,820 bytes). With everything allocated,
+  about 189 KB of heap is left. A second core rewrites one frame while the
+  other plays.
+
+**Porting to something else.** The host tools don't care what makes the
+signal. They talk to the generator over serial (`test`, `manifest`, `info`;
+see [Serial commands](#serial-commands-921600-baud)) and read the frame
+markers from the video. Another microcontroller would need:
+1. **A continuous sample stream of at least 14.3 MS/s** with no CPU in the
+   loop. Either a DAC fed by DMA (check its conversion rate: many on-chip
+   DACs top out at a few MS/s), or a parallel port driving an external
+   resistor-ladder (R-2R) or video DAC. The RP2040/RP2350's PIO plus DMA
+   into a resistor ladder is a well-trodden route for composite video.
+2. **A sample clock at exactly 4 × fsc (14.318182 MHz),** or a known multiple,
+   ideally trimmable in ppm. A fractional PLL does this, or so does an
+   external 14.318 MHz crystal, a standard NTSC part.
+3. **Scatter-gather DMA:** a chain of descriptors, each pointing at a line
+   buffer with its own length, that the CPU can rewrite while it plays.
+   Variable lengths are what make the timing tests (H, F, S) possible.
+4. **At least 8 bits of resolution.** That is the DAC's noise floor:
+   8 bits gives about 0.55 IRE rms, roughly 45 dB, which limits L2. 10 bits
+   or more would be better.
+5. **An output stage into 75 Ω:** about 1 V p-p into a terminated line,
+   through a 75 Ω source resistor (see [Wiring](#wiring)).
+
+The firmware's test logic (`src/perturb.cpp`, mirrored in
+`tools/perturb_model.py`) and the frame marker are plain C++ and would carry
+over. The parts that are ESP32-specific are the DMA ring and the clock
+(`src/i2s_dac.*`, `src/ntsc_gen.*`).
+
 ## How it works
 
 - **Signal path.** The classic ESP32 (D0WD) runs I2S0 in LCD/DAC mode and
@@ -111,7 +173,9 @@ connected?") and is otherwise reported as single-channel.
 
 ## Tests
 
-Each test is tagged with the TBC class it targets. Its manifest states the
+A summary is below. [docs/tests.md](docs/tests.md) explains each test in
+plain words (what it imitates, what a good TBC should do) and lists every
+rung. Each test is tagged with the TBC class it targets. Its manifest states the
 ideal output for a **line TBC** (corrects timing, passes structure through)
 and for a **frame TBC / synchroniser** (outputs standard fields whatever
 comes in). That way a line TBC isn't marked down for passing a dropped field
@@ -124,8 +188,8 @@ through.
 | H2 | sinusoidal jitter, peak ns @ Hz | both | 50@1 … 2000@30 |
 | H3 | timing step, µs, toggles every 0.5 s | both | 0.25, 0.5, 1, 2, 5 |
 | H4 | head-switch skew, µs (lines 520–256) | both | 0.5, 1, 2, 5, 10 |
-| H5 | displaced single line (100 and 362), samples | both | ±2, ±4, ±10, ±20 |
-| F1 | sample-clock offset, ppm | both | ±10, ±30, ±100, ±300, ±1000 |
+| H5 | displaced single line (100 and 362), samples | both | +2, −2, +4, −4, +10, −10, +20, −20 (8 rungs) |
+| F1 | sample-clock offset, ppm | both | +10, −10, +30, −30 … +1000, −1000 (10 rungs) |
 | S3 | missing H syncs from line 100, lines | both | 1, 2, 5, 10, 20 |
 | S4 | malformed vertical interval, variant | frame | 1 EQ pulses → H sync · 2 unserrated V-sync · 3 both · 4/5 V-sync missing in field 1 every 30/6 frames · 6 V-sync missing in every field |
 | S5 | progressive 240p (two 262-line fields per frame) | frame | 1 |
@@ -135,7 +199,7 @@ through.
 | S9 | search noise bar: a band of sync-less snow moving 23 lines a frame, lines | both | 2, 5, 10, 20, 40 |
 | S1 | sync amplitude, IRE (40 nominal) | both | 30, 25, 20, 15, 10 |
 | S2 | slow sync edges, 10–90 % rise, ns | both | 250, 500, 1000 |
-| F2 | H rate against a fixed subcarrier, ppm (SCH drifts) | both | ±10, ±50, ±200, ±1000 |
+| F2 | H rate against a fixed subcarrier, ppm (SCH drifts) | both | +10, −10, +50, −50 … +1000, −1000 (8 rungs) |
 | F3 | slow H-rate drift, peak ppm over a 10 s period | both | 50, 300, 1000 |
 | C1 | burst amplitude, IRE p-p (40 nominal) | both | 30, 20, 10, 60 |
 | C2 | no burst | both | 1 |
@@ -401,5 +465,6 @@ rms line jitter.
 | `tools/analyze_capture.py` | levels, line rate and bar colours from a capture |
 | `tools/gen_cmd.py` | serial helpers (`BAUD`, `request`, `dump_line`) and a command-line sender |
 | `tools/dwf_list.py`, `tools/dwf_capture.py` | scope utilities |
+| `docs/tests.md` | every test in plain words, with all its rungs |
 | `docs/design.md` | test catalog, signal conventions, scoring and the grader contract |
 | `docs/bench-notes.md` | measured hardware, toolchain and signal facts, open issues |
