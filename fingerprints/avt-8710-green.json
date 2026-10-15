@@ -1,0 +1,346 @@
+{
+ "schema": "tbt-fingerprint/1",
+ "name": "AVT-8710 (green)",
+ "notes": "Fingerprint series, trial 1 of 3 back to back. CH2 at the TBC input, single termination (fixed 2026-10-15).",
+ "created": "2026-10-15 11:57",
+ "trials": [
+  {
+   "trial": "20261015-113907",
+   "channels": 2,
+   "runs": 71,
+   "score": 43.8
+  },
+  {
+   "trial": "20261015-114814",
+   "channels": 2,
+   "runs": 71,
+   "score": 42.3
+  },
+  {
+   "trial": "20261015-115722",
+   "channels": 2,
+   "runs": 71,
+   "score": 43.4
+  }
+ ],
+ "score": {
+  "median": 43.4,
+  "range": [
+   42.3,
+   43.8
+  ]
+ },
+ "traits": {
+  "output_lock": {
+   "kind": "model",
+   "label": "Output locked to its input",
+   "unit": "",
+   "n": 3,
+   "value": "free-running",
+   "agree": 1.0
+  },
+  "no_signal_output": {
+   "kind": "model",
+   "label": "With no input at all (V1)",
+   "unit": "",
+   "n": 3,
+   "value": "its own pattern",
+   "agree": 1.0
+  },
+  "lost_fields_no_signal": {
+   "kind": "model",
+   "label": "Lost fields ridden through, no signal (S10)",
+   "unit": "fields",
+   "n": 3,
+   "value": 6,
+   "range": [
+    6,
+    7
+   ],
+   "agree": 0.67
+  },
+  "lost_fields_snow": {
+   "kind": "model",
+   "label": "Lost fields ridden through, snow (S11)",
+   "unit": "fields",
+   "n": 3,
+   "value": 6,
+   "range": [
+    2,
+    6
+   ],
+   "agree": 0.67
+  },
+  "gap_shows_as": {
+   "kind": "model",
+   "label": "A lost-field gap shows as",
+   "unit": "",
+   "n": 3,
+   "value": "blanked",
+   "agree": 1.0
+  },
+  "colour_killer": {
+   "kind": "model",
+   "label": "Colour killer (C2)",
+   "unit": "",
+   "n": 3,
+   "value": "no",
+   "agree": 1.0
+  },
+  "acc": {
+   "kind": "model",
+   "label": "Automatic colour control (C1, 10 IRE burst)",
+   "unit": "",
+   "n": 3,
+   "value": "partial",
+   "agree": 1.0
+  },
+  "chroma_phase_correction": {
+   "kind": "model",
+   "label": "Per-line chroma phase correction (C3)",
+   "unit": "",
+   "n": 3,
+   "value": "no",
+   "agree": 1.0
+  },
+  "line_jitter_correction": {
+   "kind": "model",
+   "label": "Random line-jitter correction (H1, 50 ns rms)",
+   "unit": "",
+   "n": 3,
+   "value": "none",
+   "agree": 1.0
+  },
+  "head_switch_correction": {
+   "kind": "model",
+   "label": "Head-switch skew correction (H4, 10 µs)",
+   "unit": "",
+   "n": 3,
+   "value": "passes it through",
+   "agree": 1.0
+  },
+  "slow_timing_correction": {
+   "kind": "model",
+   "label": "Slow timing correction (H2, H3, F1)",
+   "unit": "",
+   "n": 3,
+   "value": "corrects",
+   "agree": 1.0
+  },
+  "progressive_240p": {
+   "kind": "model",
+   "label": "240p input (S5)",
+   "unit": "",
+   "n": 3,
+   "value": "converted to standard fields",
+   "agree": 1.0
+  },
+  "no_vsync_position": {
+   "kind": "model",
+   "label": "Picture with no V-sync (S4 r6)",
+   "unit": "",
+   "n": 3,
+   "value": "drops lower",
+   "agree": 1.0
+  },
+  "hum_clamp": {
+   "kind": "model",
+   "label": "Hum clamped (L3, 20 IRE)",
+   "unit": "",
+   "n": 3,
+   "value": "yes",
+   "agree": 1.0
+  },
+  "level_control": {
+   "kind": "model",
+   "label": "Level control (L4, 120 %)",
+   "unit": "",
+   "n": 3,
+   "value": "passes the level",
+   "agree": 1.0
+  },
+  "rate_ppm": {
+   "kind": "unit",
+   "label": "Output line rate vs input",
+   "unit": "ppm",
+   "n": 3,
+   "value": 12.42,
+   "range": [
+    12.38,
+    12.54
+   ],
+   "agree": null
+  },
+  "latency_ms": {
+   "kind": "unit",
+   "label": "Latency, range seen",
+   "unit": "ms",
+   "n": 3,
+   "value": [
+    1.03,
+    30.83
+   ],
+   "agree": null
+  },
+  "luma_gain": {
+   "kind": "unit",
+   "label": "Luma gain (V0, gray out / in)",
+   "unit": "×",
+   "n": 3,
+   "value": 0.99,
+   "range": [
+    0.989,
+    0.994
+   ],
+   "agree": null
+  },
+  "saturation_ratio": {
+   "kind": "unit",
+   "label": "Saturation (V0, chroma/burst out ÷ in)",
+   "unit": "×",
+   "n": 3,
+   "value": 0.985,
+   "range": [
+    0.978,
+    0.986
+   ],
+   "agree": null
+  },
+  "hue_offset_deg": {
+   "kind": "unit",
+   "label": "Hue offset (V0, out − in)",
+   "unit": "°",
+   "n": 3,
+   "value": -1.6,
+   "range": [
+    -1.9,
+    -1.4
+   ],
+   "agree": null
+  },
+  "burst_out_ire": {
+   "kind": "unit",
+   "label": "Output burst (V0)",
+   "unit": "IRE p-p",
+   "n": 3,
+   "value": 42.8,
+   "range": [
+    42.8,
+    42.8
+   ],
+   "agree": null
+  },
+  "output_jitter_ns": {
+   "kind": "unit",
+   "label": "Output H jitter (V0)",
+   "unit": "ns rms",
+   "n": 3,
+   "value": 0.42,
+   "range": [
+    0.4,
+    0.42
+   ],
+   "agree": null
+  },
+  "noise_out_ire": {
+   "kind": "unit",
+   "label": "Output noise on gray (V0)",
+   "unit": "IRE rms",
+   "n": 3,
+   "value": 0.42,
+   "range": [
+    0.32,
+    0.5
+   ],
+   "agree": null
+  },
+  "acc_fraction": {
+   "kind": "unit",
+   "label": "ACC fraction (0 none, 1 full)",
+   "unit": "",
+   "n": 3,
+   "value": 0.4,
+   "range": [
+    0.4,
+    0.4
+   ],
+   "agree": null
+  },
+  "jitter_correction_db": {
+   "kind": "unit",
+   "label": "H1 r4 correction (input ÷ residual)",
+   "unit": "dB",
+   "n": 3,
+   "value": -1.3,
+   "range": [
+    -1.4,
+    -1.3
+   ],
+   "agree": null
+  },
+  "sync_depth_v": {
+   "kind": "rig",
+   "label": "Output sync depth (V0; depends on termination)",
+   "unit": "V",
+   "n": 3,
+   "value": 0.539,
+   "range": [
+    0.539,
+    0.54
+   ],
+   "agree": null
+  }
+ },
+ "variable": [
+  {
+   "test": "H1",
+   "rung": 2,
+   "trials": 3,
+   "verdicts": {
+    "pass": 2,
+    "fail": 1
+   },
+   "pass_rate": 0.67
+  },
+  {
+   "test": "S6",
+   "rung": 5,
+   "trials": 3,
+   "verdicts": {
+    "pass": 2,
+    "fail": 1
+   },
+   "pass_rate": 0.67
+  },
+  {
+   "test": "L2",
+   "rung": 3,
+   "trials": 3,
+   "verdicts": {
+    "pass": 2,
+    "fail": 1
+   },
+   "pass_rate": 0.67
+  },
+  {
+   "test": "S10",
+   "rung": 7,
+   "trials": 3,
+   "verdicts": {
+    "fail": 2,
+    "pass": 1
+   },
+   "pass_rate": 0.33
+  },
+  {
+   "test": "S11",
+   "rung": 3,
+   "trials": 3,
+   "verdicts": {
+    "fail": 1,
+    "marginal": 2
+   },
+   "pass_rate": 0.33
+  }
+ ]
+}
