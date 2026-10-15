@@ -513,3 +513,13 @@ rms line jitter.
 | `docs/tests.md` | every test in plain words, with all its rungs |
 | `docs/design.md` | test catalog, signal conventions, scoring and the grader contract |
 | `docs/bench-notes.md` | measured hardware, toolchain and signal facts, open issues |
+
+## License
+
+TBT is released under the [MIT License](LICENSE): use, modify and share it
+freely, keeping the copyright notice. It comes with no warranty.
+
+Third-party parts keep their own licences: the ESP32 Arduino core and
+ESP-IDF that the firmware builds on, and numpy and pyserial on the host.
+Digilent's WaveForms SDK, which `tools/dwf_scope.py` calls to drive the
+scope, is proprietary and isn't included here. Install it from Digilent.
