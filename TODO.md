@@ -62,6 +62,7 @@ order. Measured facts and open issues live in
 
 ## Datavideo TBC-1000
 - [x] **Output dropout:** built `tools/dropout_watch.py` (2026-10-13).
+- [ ] Heat test: 5 field trials (46 min) in a cooler spot didn't hang it (2026-10-14). Next: the same with the unit warmed (back in its old spot, or covered), logging output sync depth; and a 1–2 hour clean V0 watch.
 - [ ] Output sags then dies (see bench notes). A power-cycle cleared it,
       and 10 suites after that (45 minutes) stayed clean. Next: a long
       S4:6 / S11:2 watch (an hour or more, unit warm) to see if it comes
