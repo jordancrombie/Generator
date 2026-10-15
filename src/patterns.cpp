@@ -140,7 +140,7 @@ struct TitleLine { const char *text; int top; int px; float ire; };  // px: pict
 static const TitleLine TITLE[] = {
     {"TBT", 56, 24, 100.0f},
     {"TIME BASE TORTURE", 256, 5, 80.0f},
-    {"VIDEO ARCHIVE PROJECT", 322, 4, 60.0f},
+    {"MEDIA ARCHIVE PROJECT", 322, 4, 60.0f},
 };
 static const int NUM_TITLE = sizeof(TITLE) / sizeof(TITLE[0]);
 static const int TITLE_BARS_TOP = 400, TITLE_BARS_ROWS = 24;  // a slim strip of colour bars

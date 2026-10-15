@@ -4,7 +4,12 @@ A rig for putting **time-base correctors (TBCs) used with VHS and Betamax**
 through their paces. An ESP32 generates NTSC composite video with precisely
 controlled faults. The signal passes through the TBC under test, and a scope
 (an ADP2230 here) captures what came out and, optionally, what went in. The
-tools then report how well the TBC repaired it. A grader is in progress.
+tools then report how well the TBC repaired it, and grade it (provisionally).
+
+> **⚠ Use at your own risk.** TBT is a torture test: it deliberately feeds a
+> TBC broken, out-of-spec signals. We've run it on our own TBCs without
+> damaging them, but we can't promise the same for yours. See
+> [Disclaimer](#disclaimer) before connecting equipment you care about.
 
 A **field trial** is one run of the suite against a TBC: a series of test
 rungs, each captured and analysed, rolled up into one report. The name works
@@ -273,7 +278,7 @@ committed. Where the time goes is broken down in
 ## Title card
 
 For photos and posts, the generator can show a TBT title card: **TBT** in
-large letters, *TIME BASE TORTURE* and *VIDEO ARCHIVE PROJECT* beneath, and a
+large letters, *TIME BASE TORTURE* and *MEDIA ARCHIVE PROJECT* beneath, and a
 slim strip of colour bars. It is never part of a test.
 
 ```
@@ -530,6 +535,44 @@ rms line jitter.
 | `docs/design.md` | test catalog, signal conventions, scoring and the grader contract |
 | `docs/bench-notes.md` | measured hardware, toolchain and signal facts, open issues |
 
+## Disclaimer
+
+TBT is a **torture test**, and the name is meant literally. It deliberately
+feeds the TBC under test signals a healthy source never would:
+- jittered and malformed sync;
+- missing fields and lost signal;
+- snow and noise;
+- levels outside the normal range;
+- hours of continuous stress, if you run it that long.
+
+**You use TBT entirely at your own risk.** We've run it against our own TBCs
+(an AVT-8710 and a Datavideo TBC-1000) without damaging them. But during
+testing the TBC-1000's output did intermittently stop until it was
+power-cycled, and old equipment can fail in ways nobody can predict. Your
+units may be older, more fragile or differently built than ours.
+
+By using TBT you accept that:
+- **you are responsible** for your own equipment and for how you connect
+  and use it;
+- the authors and contributors **aren't liable** for any damage, failure or
+  loss: a TBC (or anything else in the chain) that hangs, overheats, breaks
+  or "blows up", lost recordings or captures, or anything else that follows
+  from using TBT;
+- the generator, analysis and grades are offered **as is**, with no
+  warranty that they are correct or fit for any purpose (see the
+  [License](#license)).
+
+Some sensible precautions:
+- check your wiring and termination (see [Wiring](#wiring)) before
+  powering anything;
+- don't connect anything that expects more than a standard 1 V p-p
+  composite signal. With the 75 Ω series resistor, the ESP32 output stays
+  below about 1.65 V into a 75 Ω input, and below 3.3 V if left
+  unterminated;
+- keep an eye on the TBC during long runs, give it airflow, and stop if it
+  gets unusually hot;
+- don't test a unit you can't afford to lose.
+
 ## License
 
 TBT is released under the [MIT License](LICENSE): use, modify and share it
@@ -539,3 +582,7 @@ Third-party parts keep their own licences: the ESP32 Arduino core and
 ESP-IDF that the firmware builds on, and numpy and pyserial on the host.
 Digilent's WaveForms SDK, which `tools/dwf_scope.py` calls to drive the
 scope, is proprietary and isn't included here. Install it from Digilent.
+
+---
+
+*Brought to you by the **Media Archive Project**.*
