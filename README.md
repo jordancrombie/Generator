@@ -573,6 +573,20 @@ Some sensible precautions:
   gets unusually hot;
 - don't test a unit you can't afford to lose.
 
+## Made with AI
+
+**This project is 100 % made with AI. Yes, 100 % AI slop!** Every line of
+firmware, every host tool, the analysis and grading, the tests and all the
+documentation were written by an AI: Claude, working in Claude Code. A human
+chose the direction, ran the bench (wiring, swapping TBCs, power-cycling
+them, watching the monitor) and decided what to merge.
+
+So read it the way you would any AI-written code: it has been checked against
+real hardware, and its measurements were cross-checked against a reference
+model and a second scope channel, but it may still be wrong in ways nobody
+has noticed yet. Bug reports and fixes are welcome, as are human-written
+ones.
+
 ## License
 
 TBT is released under the [MIT License](LICENSE): use, modify and share it
@@ -586,3 +600,5 @@ scope, is proprietary and isn't included here. Install it from Digilent.
 ---
 
 *Brought to you by the **Media Archive Project**.*
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
