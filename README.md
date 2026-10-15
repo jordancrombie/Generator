@@ -83,6 +83,64 @@ watch only ever uses CH1.
 With two channels, a run whose CH2 shows no video says so ("is the reference
 connected?") and is otherwise reported as single-channel.
 
+## Which microcontroller?
+
+**You need an original ("classic") ESP32,** the chip on most ESP32-WROOM-32
+and ESP32-DevKitC boards. `esptool chip-id` reports it as `ESP32-D0WD…`
+(or `ESP32-D0WDQ6…` on older boards). The firmware builds for PlatformIO's `esp32dev`
+board. Cheap ESP32 dev boards usually have this chip, but check: the newer
+family members won't work.
+
+| Chip | Works? | Why |
+|---|---|---|
+| ESP32 (classic: D0WD, D0WDQ6, PICO-D4, WROOM-32, WROVER) | **Yes** | 8-bit DACs on GPIO25/26, and I2S0 can stream DMA straight into the DAC ("built-in DAC mode"), clocked from the audio PLL |
+| ESP32-S2 | No (not without a port) | Has DACs, but not the I2S-to-DAC path this firmware uses |
+| ESP32-S3, C3, C5, C6, H2, P4 | No | No DAC at all |
+
+**Why it's special.** A composite video signal needs about 14.3 million
+samples a second, every one on time, for as long as the test runs. No CPU can
+write a DAC that fast by hand, so the samples have to stream by DMA. The
+classic ESP32 has a rare combination:
+- **DMA straight into its own DAC.** I2S0 in "LCD/DAC mode" feeds the 8-bit
+  DAC directly, with no external parts.
+- **A tunable audio PLL (APLL),** which sets the sample clock to exactly
+  4 × the colour subcarrier (14.318182 MHz) and can trim it in ~2 ppm steps.
+  An exact subcarrier is what makes the colours right.
+- **Linked-list DMA descriptors with their own lengths.** Each line plays from
+  a buffer through its own descriptor. Changing a descriptor's length moves
+  the next line's sync, which is how TBT creates timing faults without
+  re-rendering anything.
+- **Enough RAM** for two frames of DMA descriptors and a pool of
+  pre-rendered lines (each line is 1,820 bytes). With everything allocated,
+  about 189 KB of heap is left. A second core rewrites one frame while the
+  other plays.
+
+**Porting to something else.** The host tools don't care what makes the
+signal. They talk to the generator over serial (`test`, `manifest`, `info`;
+see [Serial commands](#serial-commands-921600-baud)) and read the frame
+markers from the video. Another microcontroller would need:
+1. **A continuous sample stream of at least 14.3 MS/s** with no CPU in the
+   loop. Either a DAC fed by DMA (check its conversion rate: many on-chip
+   DACs top out at a few MS/s), or a parallel port driving an external
+   resistor-ladder (R-2R) or video DAC. The RP2040/RP2350's PIO plus DMA
+   into a resistor ladder is a well-trodden route for composite video.
+2. **A sample clock at exactly 4 × fsc (14.318182 MHz),** or a known multiple,
+   ideally trimmable in ppm. A fractional PLL does this, or so does an
+   external 14.318 MHz crystal, a standard NTSC part.
+3. **Scatter-gather DMA:** a chain of descriptors, each pointing at a line
+   buffer with its own length, that the CPU can rewrite while it plays.
+   Variable lengths are what make the timing tests (H, F, S) possible.
+4. **At least 8 bits of resolution.** That is the DAC's noise floor:
+   8 bits gives about 0.55 IRE rms, roughly 45 dB, which limits L2. 10 bits
+   or more would be better.
+5. **An output stage into 75 Ω:** about 1 V p-p into a terminated line,
+   through a 75 Ω source resistor (see [Wiring](#wiring)).
+
+The firmware's test logic (`src/perturb.cpp`, mirrored in
+`tools/perturb_model.py`) and the frame marker are plain C++ and would carry
+over. The parts that are ESP32-specific are the DMA ring and the clock
+(`src/i2s_dac.*`, `src/ntsc_gen.*`).
+
 ## How it works
 
 - **Signal path.** The classic ESP32 (D0WD) runs I2S0 in LCD/DAC mode and
